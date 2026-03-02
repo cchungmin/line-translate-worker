@@ -1,0 +1,27 @@
+{
+	"name": "line-translate-worker",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-12-27",
+	"observability": {
+		"enabled": true,
+	},
+	"vars": {
+		"OPENAI_MODEL": "gpt-4o-mini",
+		"OPENAI_FALLBACK_MODEL": "gpt-4o-mini",
+		"TRANSLATION_MODE": "auto",
+		"TRANSLATION_STYLE": "casual",
+		"TRIGGER_MODE": "mention",
+		"TRIGGER_MENTION": "@翻譯",
+		"DEBUG_LOG": "false",
+		"MAX_INPUT_CHARS": "1200",
+		"MAX_OUTPUT_TOKENS": "800",
+		"OPENAI_TIMEOUT_MS": "8000",
+		"RATE_LIMIT_PER_MIN": "20",
+		"IDEMPOTENCY_TTL_SECONDS": "300",
+		"ERROR_REPLY_ENABLED": "true"
+	}
+	// Optional KV binding for idempotency + rate limit:
+	// "kv_namespaces": [
+	// 	{ "binding": "APP_KV", "id": "<your_kv_namespace_id>" }
+	// ]
+}
