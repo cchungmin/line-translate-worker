@@ -6,7 +6,7 @@
 		"enabled": true,
 	},
 	"vars": {
-		"OPENAI_MODEL": "gpt-4o-mini",
+		"OPENAI_MODEL": "gpt-4.1-mini",
 		"OPENAI_FALLBACK_MODEL": "gpt-4o-mini",
 		"TRANSLATION_MODE": "auto",
 		"TRANSLATION_STYLE": "casual",

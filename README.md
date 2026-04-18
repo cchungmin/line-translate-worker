@@ -25,10 +25,10 @@ Cloudflare Worker that receives LINE webhook messages, translates text with Open
 
 ## Runtime Vars (`wrangler.jsonc`)
 
-- `OPENAI_MODEL`
-- `OPENAI_FALLBACK_MODEL`
+- `OPENAI_MODEL` (current default: `gpt-4.1-mini`)
+- `OPENAI_FALLBACK_MODEL` (recommended fallback: `gpt-4o-mini`)
 - `TRANSLATION_MODE` (`auto | ja2zh | zh2ja`)
-- `TRANSLATION_STYLE` (`business | casual`)
+- `TRANSLATION_STYLE` (`business | casual | neutral | polite`)
 - `TRIGGER_MODE` (`all | mention | direct`)
 - `TRIGGER_MENTION`
 - `DEBUG_LOG` (`true | false`)
@@ -63,3 +63,13 @@ Cloudflare Worker that receives LINE webhook messages, translates text with Open
 - No reply in group mention mode:
   - Mention metadata may be absent for plain text tags.
   - Use command tags (`@TWJP`, `@JPTW`, `@ENJP`, `@JPEN`) or configure `LINE_BOT_USER_ID`.
+
+## Command Tags
+
+- `@TWJP`, `@JPTW`, `@ENJP`, `@JPEN`
+- Optional style suffix: `-N` (neutral/plain), `-P` (polite), `-B` (business)
+- Examples:
+  - `@TWJP 明天麻煩你確認一下` -> defaults to polite Japanese (`です・ます`)
+  - `@TWJP-N 明天麻煩你確認一下`
+  - `@TWJP-B 請協助安排下週會議`
+  - `@JPTW-P お手数ですが、ご確認をお願いいたします`

@@ -5,7 +5,7 @@ export interface Env {
 	OPENAI_MODEL?: string;
 	OPENAI_FALLBACK_MODEL?: string;
 	TRANSLATION_MODE?: 'auto' | 'ja2zh' | 'zh2ja';
-	TRANSLATION_STYLE?: 'business' | 'casual';
+	TRANSLATION_STYLE?: 'business' | 'casual' | 'neutral' | 'polite';
 	TRIGGER_MODE?: 'all' | 'mention' | 'direct';
 	TRIGGER_MENTION?: string;
 	DEBUG_LOG?: 'true' | 'false';

@@ -108,6 +108,7 @@ async function handleLineEvents(events: LineEvent[], env: Env, config: RuntimeCo
 		const normalized = normalizeUserText(event, env);
 		log(env, 'info', 'event_normalized', {
 			command: normalized.command ?? '',
+			styleOverride: normalized.styleOverride ?? '',
 			inputLength: normalized.text.length,
 		});
 
@@ -126,7 +127,7 @@ async function handleLineEvents(events: LineEvent[], env: Env, config: RuntimeCo
 		}
 
 		const result = await translateWithFallback(env, {
-			systemPrompt: buildSystemPrompt(env, normalized.command),
+			systemPrompt: buildSystemPrompt(env, normalized.command, normalized.styleOverride),
 			userText: normalized.text,
 			maxOutputTokens: config.maxOutputTokens,
 			timeoutMs: config.openAiTimeoutMs,
