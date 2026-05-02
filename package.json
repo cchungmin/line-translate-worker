@@ -2,6 +2,7 @@
 	"name": "line-translate-worker",
 	"version": "0.0.0",
 	"private": true,
+	"description": "LINE bot translation worker powered by OpenAI and Cloudflare Workers.",
 	"engines": {
 		"node": ">=20.0.0"
 	},

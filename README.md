@@ -1,6 +1,6 @@
 # LINE Translate Worker
 
-Cloudflare Worker that receives LINE webhook messages, translates text with OpenAI, and replies back to LINE.
+LINE bot translation worker powered by OpenAI and Cloudflare Workers.
 
 ## Requirements
 
@@ -22,6 +22,7 @@ Cloudflare Worker that receives LINE webhook messages, translates text with Open
 4. Optional KV for idempotency/rate limit:
    - Create KV namespace
    - Add binding `APP_KV` in `wrangler.jsonc`
+   - Without `APP_KV`, `RATE_LIMIT_PER_MIN` and idempotency checks are not enforced.
 
 ## Runtime Vars (`wrangler.jsonc`)
 
