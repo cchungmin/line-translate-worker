@@ -5,20 +5,23 @@ LINE bot translation worker powered by OpenAI and Cloudflare Workers.
 ## Requirements
 
 - Node.js `>=20.0.0`
+- pnpm `11.7.0` via Corepack
 - Cloudflare account + Wrangler
 - LINE Messaging API channel
 - OpenAI API key
 
 ## Setup
 
-1. Install dependencies:
-   - `npm install`
+1. Enable pnpm and install dependencies:
+   - `corepack enable`
+   - `corepack prepare pnpm@11.7.0 --activate`
+   - `pnpm install`
 2. Configure secrets:
-   - `npx wrangler secret put LINE_CHANNEL_SECRET`
-   - `npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN`
-   - `npx wrangler secret put OPENAI_API_KEY`
+   - `pnpm exec wrangler secret put LINE_CHANNEL_SECRET`
+   - `pnpm exec wrangler secret put LINE_CHANNEL_ACCESS_TOKEN`
+   - `pnpm exec wrangler secret put OPENAI_API_KEY`
 3. Optional secret for precise mention matching:
-   - `npx wrangler secret put LINE_BOT_USER_ID`
+   - `pnpm exec wrangler secret put LINE_BOT_USER_ID`
 4. Optional KV for idempotency/rate limit:
    - Create KV namespace
    - Add binding `APP_KV` in `wrangler.jsonc`
@@ -42,17 +45,24 @@ LINE bot translation worker powered by OpenAI and Cloudflare Workers.
 
 ## Local Run
 
-- `npm run dev`
+- `pnpm dev`
+
+## Validation
+
+- `pnpm run typecheck`
+- `pnpm test -- --run`
+- CI runs both commands on pull requests and pushes to `main`.
 
 ## Deploy
 
-- `npx wrangler deploy`
+- `pnpm deploy`
+- Continuous deployment is not configured yet. Add it separately after defining the Cloudflare environment and repository secrets.
 
 ## Debug Runbook
 
 1. Set `DEBUG_LOG` to `true`.
 2. Deploy.
-3. Check logs with `wrangler tail` or Cloudflare dashboard.
+3. Check logs with `pnpm exec wrangler tail` or Cloudflare dashboard.
 4. For bot profile debug:
    - `GET /debug/bot-info?debug=1`
 5. Set `DEBUG_LOG` back to `false` after troubleshooting.
