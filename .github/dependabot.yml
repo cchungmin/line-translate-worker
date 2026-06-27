@@ -1,5 +1,6 @@
 version: 2
 updates:
+  # GitHub uses the "npm" ecosystem for npm, yarn, and pnpm manifests/lockfiles.
   - package-ecosystem: "npm"
     directory: "/"
     schedule:

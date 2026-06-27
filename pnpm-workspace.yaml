@@ -1,0 +1,7 @@
+# These packages need postinstall/build scripts for native binaries used by
+# Workers tests and local tooling. Keep the list explicit for supply-chain
+# review instead of approving all builds.
+allowBuilds:
+  esbuild: true
+  sharp: true
+  workerd: true
