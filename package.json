@@ -3,6 +3,7 @@
 	"version": "0.0.0",
 	"private": true,
 	"description": "LINE bot translation worker powered by OpenAI and Cloudflare Workers.",
+	"packageManager": "pnpm@11.7.0",
 	"engines": {
 		"node": ">=20.0.0"
 	},
