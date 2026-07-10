@@ -69,6 +69,7 @@ async function requestTranslation(env: Env, options: RequestOptions): Promise<Op
 				],
 				temperature: 0,
 				max_tokens: options.maxOutputTokens,
+				store: false,
 			}),
 			signal: controller.signal,
 		});

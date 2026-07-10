@@ -1,13 +1,14 @@
 import { replyLineMessage, fetchLineBotInfo } from './clients/line';
 import { translateWithFallback } from './clients/openai';
 import { getConfig, validateRequiredEnv } from './config';
-import { isDuplicateEvent, isRateLimited } from './guards';
+import { claimTranslationSlot } from './guards';
 import { log } from './logger';
 import type { Env, ExecutionContext, ExportedHandler } from './types';
 import {
 	buildSystemPrompt,
 	isValidLineSignature,
 	normalizeUserText,
+	readRequestBodyWithinLimit,
 	shouldTranslateEvent,
 	type LineEvent,
 	type LineWebhookPayload,
@@ -32,7 +33,10 @@ export default {
 			return new Response('Method Not Allowed', { status: 405 });
 		}
 
-		const rawBody = await request.arrayBuffer();
+		const rawBody = await readRequestBodyWithinLimit(request, config.maxWebhookBodyBytes);
+		if (!rawBody) {
+			return new Response('Payload Too Large', { status: 413 });
+		}
 		const signature = request.headers.get('x-line-signature') ?? '';
 		if (!(await isValidLineSignature(rawBody, signature, env.LINE_CHANNEL_SECRET))) {
 			return new Response('Invalid signature', { status: 401 });
@@ -83,22 +87,7 @@ async function handleLineEvents(events: LineEvent[], env: Env, config: RuntimeCo
 		log(env, 'info', 'event_received', {
 			webhookEventId: event.webhookEventId ?? '',
 			sourceType: event.source?.type ?? '',
-			replyToken: event.replyToken ?? '',
 		});
-
-		if (await isDuplicateEvent(env.APP_KV, event.webhookEventId, config.idempotencyTtlSeconds)) {
-			log(env, 'warn', 'event_skipped_duplicate', { webhookEventId: event.webhookEventId ?? '' });
-			continue;
-		}
-
-		if (await isRateLimited(env.APP_KV, event, config.rateLimitPerMin)) {
-			log(env, 'warn', 'event_skipped_rate_limited', {
-				sourceType: event.source?.type ?? '',
-				webhookEventId: event.webhookEventId ?? '',
-			});
-			await maybeReplyError(event.replyToken, '請稍後再試，訊息太頻繁。', env, config);
-			continue;
-		}
 
 		if (!shouldTranslateEvent(event, env)) {
 			log(env, 'info', 'event_skipped_trigger_not_matched');
@@ -123,6 +112,31 @@ async function handleLineEvents(events: LineEvent[], env: Env, config: RuntimeCo
 				env,
 				config,
 			);
+			continue;
+		}
+
+		const slot = await claimTranslationSlot(
+			env.TRANSLATION_GUARD,
+			event,
+			config.rateLimitPerMin,
+			config.idempotencyTtlSeconds,
+		);
+		if (slot === 'unavailable') {
+			log(env, 'error', 'translation_guard_unavailable', {
+				webhookEventId: event.webhookEventId ?? '',
+			});
+			continue;
+		}
+		if (slot === 'duplicate') {
+			log(env, 'warn', 'event_skipped_duplicate', { webhookEventId: event.webhookEventId ?? '' });
+			continue;
+		}
+		if (slot === 'rate_limited') {
+			log(env, 'warn', 'event_skipped_rate_limited', {
+				sourceType: event.source?.type ?? '',
+				webhookEventId: event.webhookEventId ?? '',
+			});
+			await maybeReplyError(event.replyToken, '請稍後再試，訊息太頻繁。', env, config);
 			continue;
 		}
 
@@ -154,7 +168,6 @@ async function handleLineEvents(events: LineEvent[], env: Env, config: RuntimeCo
 			if (!reply.ok) {
 				log(env, 'warn', 'line_reply_failed', {
 					status: reply.status,
-					body: reply.body,
 				});
 			}
 		}
@@ -188,7 +201,8 @@ async function maybeReplyError(
 	if (!reply.ok) {
 		log(env, 'warn', 'line_reply_error_message_failed', {
 			status: reply.status,
-			body: reply.body,
 		});
 	}
 }
+
+export { TranslationGuard } from './guards';
