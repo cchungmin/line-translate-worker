@@ -3,6 +3,7 @@ import type { Env } from './types';
 const DEFAULT_MAX_INPUT_CHARS = 1200;
 const DEFAULT_MAX_OUTPUT_TOKENS = 800;
 const DEFAULT_OPENAI_TIMEOUT_MS = 8000;
+const DEFAULT_MAX_WEBHOOK_BODY_BYTES = 64 * 1024;
 const DEFAULT_RATE_LIMIT_PER_MIN = 20;
 const DEFAULT_IDEMPOTENCY_TTL_SECONDS = 300;
 
@@ -10,6 +11,7 @@ export type AppConfig = {
 	maxInputChars: number;
 	maxOutputTokens: number;
 	openAiTimeoutMs: number;
+	maxWebhookBodyBytes: number;
 	rateLimitPerMin: number;
 	idempotencyTtlSeconds: number;
 	errorReplyEnabled: boolean;
@@ -20,6 +22,10 @@ export function getConfig(env: Env): AppConfig {
 		maxInputChars: parsePositiveInt(env.MAX_INPUT_CHARS, DEFAULT_MAX_INPUT_CHARS),
 		maxOutputTokens: parsePositiveInt(env.MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS),
 		openAiTimeoutMs: parsePositiveInt(env.OPENAI_TIMEOUT_MS, DEFAULT_OPENAI_TIMEOUT_MS),
+		maxWebhookBodyBytes: parsePositiveInt(
+			env.MAX_WEBHOOK_BODY_BYTES,
+			DEFAULT_MAX_WEBHOOK_BODY_BYTES,
+		),
 		rateLimitPerMin: parsePositiveInt(env.RATE_LIMIT_PER_MIN, DEFAULT_RATE_LIMIT_PER_MIN),
 		idempotencyTtlSeconds: parsePositiveInt(
 			env.IDEMPOTENCY_TTL_SECONDS,
