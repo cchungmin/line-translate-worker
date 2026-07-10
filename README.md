@@ -22,26 +22,30 @@ LINE bot translation worker powered by OpenAI and Cloudflare Workers.
    - `pnpm exec wrangler secret put OPENAI_API_KEY`
 3. Optional secret for precise mention matching:
    - `pnpm exec wrangler secret put LINE_BOT_USER_ID`
-4. Optional KV for idempotency/rate limit:
-   - Create KV namespace
-   - Add binding `APP_KV` in `wrangler.jsonc`
-   - Without `APP_KV`, `RATE_LIMIT_PER_MIN` and idempotency checks are not enforced.
+4. Deploy once to create the required Durable Object binding for atomic idempotency and rate limiting:
+   - `pnpm deploy`
 
 ## Runtime Vars (`wrangler.jsonc`)
 
-- `OPENAI_MODEL` (current default: `gpt-4.1-mini`)
-- `OPENAI_FALLBACK_MODEL` (recommended fallback: `gpt-4o-mini`)
+- `OPENAI_MODEL` (current default: `gpt-4o-mini`)
+- `OPENAI_FALLBACK_MODEL` (current default: `gpt-4.1-mini`)
 - `TRANSLATION_MODE` (`auto | ja2zh | zh2ja`)
 - `TRANSLATION_STYLE` (`business | casual | neutral | polite`)
 - `TRIGGER_MODE` (`all | mention | direct`)
 - `TRIGGER_MENTION`
+- `GROUP_TRANSLATION_ENABLED` (`true | false`, default `false`)
+  - `true`: translate every text message in groups and rooms.
+  - `false`: groups and rooms translate only when the bot is explicitly tagged (`@翻譯` or a command tag).
 - `DEBUG_LOG` (`true | false`)
 - `MAX_INPUT_CHARS`
 - `MAX_OUTPUT_TOKENS`
 - `OPENAI_TIMEOUT_MS`
+- `MAX_WEBHOOK_BODY_BYTES` (default: `65536`)
 - `RATE_LIMIT_PER_MIN`
 - `IDEMPOTENCY_TTL_SECONDS`
 - `ERROR_REPLY_ENABLED`
+
+The Worker explicitly sends `store: false` to OpenAI. It does not persist message text; the Durable Object stores only short-lived event IDs and rate-limit counters.
 
 ## Local Run
 

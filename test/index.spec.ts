@@ -39,6 +39,32 @@ describe('LINE translator worker', () => {
 		expect(await response.text()).toBe('Invalid signature');
 	});
 
+	it('rejects an oversized webhook before reading or verifying it', async () => {
+		const request = new Request('http://example.com', {
+			method: 'POST',
+			headers: {
+				'content-length': '65537',
+				'x-line-signature': 'invalid',
+			},
+			body: '{}',
+		});
+
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(
+			request,
+			{
+				LINE_CHANNEL_SECRET: 'test-secret',
+				LINE_CHANNEL_ACCESS_TOKEN: 'token',
+				OPENAI_API_KEY: 'key',
+			} as Env,
+			ctx,
+		);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(413);
+		expect(await response.text()).toBe('Payload Too Large');
+	});
+
 	it('integration health check returns 200', async () => {
 		const response = await SELF.fetch('https://example.com');
 		expect(response.status).toBe(200);

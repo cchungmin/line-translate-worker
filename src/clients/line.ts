@@ -5,7 +5,7 @@ export async function replyLineMessage(
 	replyToken: string,
 	text: string,
 	env: Env,
-): Promise<{ ok: true } | { ok: false; status: number; body: string }> {
+): Promise<{ ok: true } | { ok: false; status: number }> {
 	const response = await fetch('https://api.line.me/v2/bot/message/reply', {
 		method: 'POST',
 		headers: {
@@ -22,11 +22,8 @@ export async function replyLineMessage(
 		return { ok: true };
 	}
 
-	return {
-		ok: false,
-		status: response.status,
-		body: await response.text(),
-	};
+	await response.body?.cancel();
+	return { ok: false, status: response.status };
 }
 
 export async function fetchLineBotInfo(env: Env): Promise<LineBotInfo | null> {
