@@ -35,7 +35,12 @@ jobs:
           corepack prepare pnpm@11.7.0 --activate
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            pnpm install --frozen-lockfile --config.minimumReleaseAge=0
+          else
+            pnpm install --frozen-lockfile
+          fi
 
       - name: Typecheck
         run: pnpm run typecheck

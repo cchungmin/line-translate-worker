@@ -4,7 +4,7 @@ LINE bot translation worker powered by OpenAI and Cloudflare Workers.
 
 ## Requirements
 
-- Node.js `>=20.0.0`
+- Node.js `>=20.19.0`
 - pnpm `11.7.0` via Corepack
 - Cloudflare account + Wrangler
 - LINE Messaging API channel
