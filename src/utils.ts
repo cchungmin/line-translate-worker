@@ -69,8 +69,8 @@ export function shouldTranslateEvent(event: LineEvent, env: Env): boolean {
 		return env.GROUP_TRANSLATION_ENABLED === 'true' || hasTagTrigger;
 	}
 
-	if (mode === 'direct' && sourceType !== 'user') {
-		return false;
+	if (mode === 'direct') {
+		return sourceType === 'user';
 	}
 
 	if (mode === 'mention') {

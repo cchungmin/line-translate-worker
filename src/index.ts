@@ -80,96 +80,106 @@ type RuntimeConfig = ReturnType<typeof getConfig>;
 
 async function handleLineEvents(events: LineEvent[], env: Env, config: RuntimeConfig): Promise<void> {
 	for (const event of events) {
-		if (event.type !== 'message' || event.message?.type !== 'text') {
-			continue;
+		try {
+			await handleLineEvent(event, env, config);
+		} catch {
+			// Do not include exception text: upstream errors can contain sensitive data.
+			log(env, 'error', 'event_processing_failed');
 		}
+	}
+}
 
-		log(env, 'info', 'event_received', {
-			webhookEventId: event.webhookEventId ?? '',
-			sourceType: event.source?.type ?? '',
-		});
+async function handleLineEvent(event: LineEvent, env: Env, config: RuntimeConfig): Promise<void> {
+	if (event.type !== 'message' || event.message?.type !== 'text') {
+		return;
+	}
 
-		if (!shouldTranslateEvent(event, env)) {
-			log(env, 'info', 'event_skipped_trigger_not_matched');
-			continue;
-		}
+	log(env, 'info', 'event_received', {
+		webhookEventId: event.webhookEventId ?? '',
+		sourceType: event.source?.type ?? '',
+	});
 
-		const normalized = normalizeUserText(event, env);
-		log(env, 'info', 'event_normalized', {
-			command: normalized.command ?? '',
-			styleOverride: normalized.styleOverride ?? '',
-			inputLength: normalized.text.length,
-		});
+	if (!shouldTranslateEvent(event, env)) {
+		log(env, 'info', 'event_skipped_trigger_not_matched');
+		return;
+	}
 
-		if (!normalized.text) {
-			continue;
-		}
+	const normalized = normalizeUserText(event, env);
+	log(env, 'info', 'event_normalized', {
+		command: normalized.command ?? '',
+		styleOverride: normalized.styleOverride ?? '',
+		inputLength: normalized.text.length,
+	});
 
-		if (normalized.text.length > config.maxInputChars) {
-			await maybeReplyError(
-				event.replyToken,
-				`訊息太長，請控制在 ${config.maxInputChars} 字內再試。`,
-				env,
-				config,
-			);
-			continue;
-		}
+	if (!normalized.text) {
+		return;
+	}
 
-		const slot = await claimTranslationSlot(
-			env.TRANSLATION_GUARD,
-			event,
-			config.rateLimitPerMin,
-			config.idempotencyTtlSeconds,
+	if (normalized.text.length > config.maxInputChars) {
+		await maybeReplyError(
+			event.replyToken,
+			`訊息太長，請控制在 ${config.maxInputChars} 字內再試。`,
+			env,
+			config,
 		);
-		if (slot === 'unavailable') {
-			log(env, 'error', 'translation_guard_unavailable', {
-				webhookEventId: event.webhookEventId ?? '',
-			});
-			continue;
-		}
-		if (slot === 'duplicate') {
-			log(env, 'warn', 'event_skipped_duplicate', { webhookEventId: event.webhookEventId ?? '' });
-			continue;
-		}
-		if (slot === 'rate_limited') {
-			log(env, 'warn', 'event_skipped_rate_limited', {
-				sourceType: event.source?.type ?? '',
-				webhookEventId: event.webhookEventId ?? '',
-			});
-			await maybeReplyError(event.replyToken, '請稍後再試，訊息太頻繁。', env, config);
-			continue;
-		}
+		return;
+	}
 
-		const result = await translateWithFallback(env, {
-			systemPrompt: buildSystemPrompt(env, normalized.command, normalized.styleOverride),
-			userText: normalized.text,
-			maxOutputTokens: config.maxOutputTokens,
-			timeoutMs: config.openAiTimeoutMs,
+	const slot = await claimTranslationSlot(
+		env.TRANSLATION_GUARD,
+		event,
+		config.rateLimitPerMin,
+		config.idempotencyTtlSeconds,
+	);
+	if (slot === 'unavailable') {
+		log(env, 'error', 'translation_guard_unavailable', {
+			webhookEventId: event.webhookEventId ?? '',
 		});
+		return;
+	}
+	if (slot === 'duplicate') {
+		log(env, 'warn', 'event_skipped_duplicate', { webhookEventId: event.webhookEventId ?? '' });
+		return;
+	}
+	if (slot === 'rate_limited') {
+		log(env, 'warn', 'event_skipped_rate_limited', {
+			sourceType: event.source?.type ?? '',
+			webhookEventId: event.webhookEventId ?? '',
+		});
+		await maybeReplyError(event.replyToken, '請稍後再試，訊息太頻繁。', env, config);
+		return;
+	}
 
-		if (!result.ok) {
-			log(env, 'warn', 'openai_failed', {
-				errorType: result.errorType,
-				status: result.status ?? 0,
-				model: result.model,
-				durationMs: result.durationMs,
-			});
-			await maybeReplyError(event.replyToken, mapOpenAiError(result.errorType), env, config);
-			continue;
-		}
+	const result = await translateWithFallback(env, {
+		systemPrompt: buildSystemPrompt(env, normalized.command, normalized.styleOverride),
+		userText: normalized.text,
+		maxOutputTokens: config.maxOutputTokens,
+		timeoutMs: config.openAiTimeoutMs,
+	});
 
-		log(env, 'info', 'openai_success', {
+	if (!result.ok) {
+		log(env, 'warn', 'openai_failed', {
+			errorType: result.errorType,
+			status: result.status ?? 0,
 			model: result.model,
 			durationMs: result.durationMs,
 		});
+		await maybeReplyError(event.replyToken, mapOpenAiError(result.errorType), env, config);
+		return;
+	}
 
-		if (event.replyToken && event.replyToken !== '00000000000000000000000000000000') {
-			const reply = await replyLineMessage(event.replyToken, result.text, env);
-			if (!reply.ok) {
-				log(env, 'warn', 'line_reply_failed', {
-					status: reply.status,
-				});
-			}
+	log(env, 'info', 'openai_success', {
+		model: result.model,
+		durationMs: result.durationMs,
+	});
+
+	if (event.replyToken && event.replyToken !== '00000000000000000000000000000000') {
+		const reply = await replyLineMessage(event.replyToken, result.text, env);
+		if (!reply.ok) {
+			log(env, 'warn', 'line_reply_failed', {
+				status: reply.status,
+				errorType: reply.errorType ?? 'http',
+			});
 		}
 	}
 }
@@ -201,6 +211,7 @@ async function maybeReplyError(
 	if (!reply.ok) {
 		log(env, 'warn', 'line_reply_error_message_failed', {
 			status: reply.status,
+			errorType: reply.errorType ?? 'http',
 		});
 	}
 }

@@ -14,6 +14,26 @@ const baseEnv = {
 } as Env;
 
 describe('utils', () => {
+	it.each(['hello', '@翻譯 hello'])('translates private messages in direct mode: %s', (text) => {
+		expect(
+			shouldTranslateEvent(
+				{ source: { type: 'user' }, message: { type: 'text', text } },
+				{
+					...baseEnv,
+					TRIGGER_MODE: 'direct',
+				},
+			),
+		).toBe(true);
+	});
+
+	it.each(['group', 'room'])('keeps %s trigger rules independent of direct mode', (type) => {
+		const event: LineEvent = { source: { type }, message: { type: 'text', text: 'hello' } };
+		const env: Env = { ...baseEnv, TRIGGER_MODE: 'direct', GROUP_TRANSLATION_ENABLED: 'false' };
+		expect(shouldTranslateEvent(event, env)).toBe(false);
+		expect(shouldTranslateEvent({ ...event, message: { type: 'text', text: '@翻譯 hello' } }, env)).toBe(true);
+		expect(shouldTranslateEvent(event, { ...env, GROUP_TRANSLATION_ENABLED: 'true' })).toBe(true);
+	});
+
 	it('detects command and strips it from text', () => {
 		const event: LineEvent = {
 			message: {
