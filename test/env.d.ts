@@ -1,3 +1,7 @@
-declare module 'cloudflare:test' {
-	interface ProvidedEnv extends Env {}
+import type { Env as AppEnv } from '../src/types';
+
+declare global {
+	namespace Cloudflare {
+		interface Env extends AppEnv {}
+	}
 }

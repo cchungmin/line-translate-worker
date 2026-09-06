@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { env } from 'cloudflare:test';
 import { claimTranslationSlot, TranslationGuard } from '../src/guards';
 import type { DurableObjectStateLike, DurableObjectStorageLike } from '../src/types';
 
@@ -26,13 +27,50 @@ async function check(guard: TranslationGuard, eventId: string, rateLimitPerMinut
 }
 
 describe('TranslationGuard', () => {
-	it('atomically claims one event and blocks duplicate or over-limit requests', async () => {
+	it('blocks duplicate or over-limit sequential requests', async () => {
 		const state: DurableObjectStateLike = { storage: new MemoryStorage() };
 		const guard = new TranslationGuard(state);
 
 		expect(await check(guard, 'event-a')).toBe('allowed');
 		expect(await check(guard, 'event-a')).toBe('duplicate');
 		expect(await check(guard, 'event-b')).toBe('rate_limited');
+	});
+
+	it('deduplicates concurrent requests through the real Durable Object binding', async () => {
+		const event = { webhookEventId: 'same-event', source: { groupId: crypto.randomUUID(), type: 'group' } };
+		const decisions = await Promise.all(Array.from({ length: 10 }, () => claimTranslationSlot(env.TRANSLATION_GUARD, event, 20, 300)));
+		expect(decisions.filter((value) => value === 'allowed')).toHaveLength(1);
+		expect(decisions.filter((value) => value === 'duplicate')).toHaveLength(9);
+	});
+
+	it('limits concurrent unique events and isolates different groups', async () => {
+		const groupId = crypto.randomUUID();
+		const decisions = await Promise.all(
+			Array.from({ length: 10 }, (_, i) =>
+				claimTranslationSlot(
+					env.TRANSLATION_GUARD,
+					{
+						webhookEventId: `event-${i}`,
+						source: { groupId, type: 'group' },
+					},
+					3,
+					300,
+				),
+			),
+		);
+		expect(decisions.filter((value) => value === 'allowed')).toHaveLength(3);
+		expect(decisions.filter((value) => value === 'rate_limited')).toHaveLength(7);
+		expect(
+			await claimTranslationSlot(
+				env.TRANSLATION_GUARD,
+				{
+					webhookEventId: 'event-0',
+					source: { groupId: crypto.randomUUID(), type: 'group' },
+				},
+				3,
+				300,
+			),
+		).toBe('allowed');
 	});
 
 	it('fails closed when the Durable Object binding is unavailable', async () => {

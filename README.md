@@ -4,7 +4,7 @@ LINE bot translation worker powered by OpenAI and Cloudflare Workers.
 
 ## Requirements
 
-- Node.js `>=20.19.0`
+- Node.js `>=24.0.0` (Node 24 is used in CI)
 - pnpm `11.7.0` via Corepack
 - Cloudflare account + Wrangler
 - LINE Messaging API channel
@@ -32,6 +32,8 @@ LINE bot translation worker powered by OpenAI and Cloudflare Workers.
 - `TRANSLATION_MODE` (`auto | ja2zh | zh2ja`)
 - `TRANSLATION_STYLE` (`business | casual | neutral | polite`)
 - `TRIGGER_MODE` (`all | mention | direct`)
+  - For private messages: `all` and `direct` translate automatically; `mention` requires an explicit tag.
+  - Groups and rooms always follow `GROUP_TRANSLATION_ENABLED` and explicit-tag rules below.
 - `TRIGGER_MENTION`
 - `GROUP_TRANSLATION_ENABLED` (`true | false`, default `false`)
   - `true`: translate every text message in groups and rooms.
@@ -45,7 +47,9 @@ LINE bot translation worker powered by OpenAI and Cloudflare Workers.
 - `IDEMPOTENCY_TTL_SECONDS`
 - `ERROR_REPLY_ENABLED`
 
-The Worker explicitly sends `store: false` to OpenAI. It does not persist message text; the Durable Object stores only short-lived event IDs and rate-limit counters.
+The Worker explicitly sends `store: false` to OpenAI. It does not persist message text; the Durable Object stores only event IDs with logical expiration timestamps and rate-limit counters. Expired IDs are removed on a subsequent accepted request, so inactive conversations can retain expired IDs beyond the deduplication window.
+
+LINE API calls have a five-second timeout. A delivery or event-processing failure is logged without message text and does not stop subsequent events in the same batch. Failed replies are not automatically retried; this avoids duplicate delivery when a timeout leaves the upstream outcome unknown.
 
 ## Local Run
 
