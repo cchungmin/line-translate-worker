@@ -49,6 +49,8 @@ LINE bot translation worker powered by OpenAI and Cloudflare Workers.
 
 The Worker explicitly sends `store: false` to OpenAI. It does not persist message text; the Durable Object stores only event IDs with logical expiration timestamps and rate-limit counters. Expired IDs are removed on a subsequent accepted request, so inactive conversations can retain expired IDs beyond the deduplication window.
 
+Translation responses use [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs) with a strict `translation` string field. Both configured models must support Chat Completions `json_schema`. The Worker validates completion status and the response schema, then sends only the field's text to LINE. Malformed, empty, refused, or truncated responses are rejected and can use the configured fallback model once; raw model output is never forwarded as an error recovery path. JSON that is part of the translated text itself is preserved.
+
 LINE API calls have a five-second timeout. A delivery or event-processing failure is logged without message text and does not stop subsequent events in the same batch. Failed replies are not automatically retried; this avoids duplicate delivery when a timeout leaves the upstream outcome unknown.
 
 ## Local Run
@@ -92,3 +94,10 @@ LINE API calls have a five-second timeout. A delivery or event-processing failur
   - `@TWJP-N 明天麻煩你確認一下`
   - `@TWJP-B 請協助安排下週會議`
   - `@JPTW-P お手数ですが、ご確認をお願いいたします`
+
+
+## Translation direction
+
+For automatic Japanese/Traditional Chinese translation, all CJK input (including Han-only Japanese such as `了解`, `承知`, `明日会議`, and `東京駅`) uses model judgment restricted to that language pair: Chinese → Japanese and Japanese → Traditional Chinese, defaulting to Japanese only when ambiguous. Absence of kana does not identify the source language. Non-CJK input defaults to Japanese. English is never an automatic target. Explicit language tags and fixed `TRANSLATION_MODE` settings take precedence; language tags are recognized only at the beginning of the text after stripping the bot mention.
+
+A conservative output check rejects all-Latin sentences of at least three words for CJK input when English was not requested, and uses the configured fallback once. Short names, numbers, links, and Latin words already in the source are exempt. This catches the reported `你能自動翻譯了嗎？` → `Can you translate automatically?` regression; it is not a complete language or translation-quality detector. Tests simulate both wrong primary output and fallback recovery; they do not establish live model accuracy.

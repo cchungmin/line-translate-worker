@@ -11,6 +11,7 @@ const testEnv: Env = {
 	OPENAI_API_KEY: 'test-key',
 	TRIGGER_MODE: 'direct',
 	DEBUG_LOG: 'false',
+	GROUP_TRANSLATION_ENABLED: 'false',
 };
 
 function event(text = 'hello'): LineEvent {
@@ -40,18 +41,18 @@ async function signedRequest(events: LineEvent[]): Promise<Request> {
 	});
 }
 
-async function deliver(events: LineEvent[]) {
+async function deliver(events: LineEvent[], overrides: Partial<Env> = {}) {
 	const ctx = createExecutionContext();
-	const response = await worker.fetch(await signedRequest(events), testEnv, ctx);
+	const response = await worker.fetch(await signedRequest(events), { ...testEnv, ...overrides }, ctx);
 	expect(response.status).toBe(200);
 	await waitOnExecutionContext(ctx);
 }
 
-function mockUpstreams(failFirstReply = false) {
+function mockUpstreams(failFirstReply = false, content = JSON.stringify({ translation: 'こんにちは' })) {
 	let replies = 0;
 	return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
 		if (String(input) === 'https://api.openai.com/v1/chat/completions') {
-			return Response.json({ choices: [{ message: { content: 'こんにちは' } }] });
+			return Response.json({ choices: [{ finish_reason: 'stop', message: { content } }] });
 		}
 		if (String(input) === 'https://api.line.me/v2/bot/message/reply') {
 			if (failFirstReply && replies++ === 0) throw new Error('sensitive network details');
@@ -80,6 +81,28 @@ describe('signed translation webhook', () => {
 		expect(upstreams).toHaveBeenCalledTimes(2);
 	});
 
+	it('sends only the translated sentence to LINE', async () => {
+		const text = '雨の日半額の店はいいね';
+		const upstreams = mockUpstreams(false, JSON.stringify({ translation: text }));
+		const message = event('@TWJP-N 下雨天半價的店真不錯');
+		await deliver([message]);
+		expect(JSON.parse(String(upstreams.mock.calls[1][1]?.body))).toEqual({
+			replyToken: message.replyToken,
+			messages: [{ type: 'text', text }],
+		});
+	});
+
+	it('never forwards a leaked sourceText wrapper to LINE', async () => {
+		const upstreams = mockUpstreams(false, '{"sourceText":"雨の日半額の店はいいね"}');
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		await deliver([event('@TWJP 下雨天半價的店真不錯')]);
+		const replies = upstreams.mock.calls.filter(([url]) => String(url) === 'https://api.line.me/v2/bot/message/reply');
+		expect(replies).toHaveLength(1);
+		expect(JSON.parse(String(replies[0][1]?.body)).messages).toEqual([
+			{ type: 'text', text: '翻譯服務暫時忙碌，請稍後再試。' },
+		]);
+	});
+
 	it('continues with the next message after a LINE network failure', async () => {
 		const upstreams = mockUpstreams(true);
 		const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -106,5 +129,25 @@ describe('signed translation webhook', () => {
 		const upstreams = mockUpstreams();
 		await deliver([{ ...event(), source: { type: 'group', groupId: crypto.randomUUID() } }]);
 		expect(upstreams).not.toHaveBeenCalled();
+	});
+});
+
+
+describe('reported Chinese-to-English regression', () => {
+	it('constrains Chinese input to the Japanese/Chinese pair and only delivers the Japanese fallback', async () => {
+		let attempts = 0;
+		const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+			if (String(url).includes('api.openai.com')) return Response.json({ choices: [{ finish_reason: 'stop', message: {
+				content: JSON.stringify({ translation: attempts++ === 0 ? 'Can you translate automatically?' : '自動翻訳できるようになった？' }),
+			} }] });
+			return Response.json({});
+		});
+		await deliver([event('你能自動翻譯了嗎？')]);
+		const requests = fetch.mock.calls.filter(([url]) => String(url).includes('api.openai.com'));
+		expect(requests).toHaveLength(2);
+		for (const [, init] of requests) expect(JSON.parse(String(init?.body)).messages[0].content).toContain('中文原文必須翻成日文');
+		const replies = fetch.mock.calls.filter(([url]) => String(url).includes('api.line.me'));
+		expect(replies).toHaveLength(1);
+		expect(JSON.parse(String(replies[0][1]?.body)).messages[0].text).toBe('自動翻訳できるようになった？');
 	});
 });

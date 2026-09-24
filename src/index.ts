@@ -1,3 +1,4 @@
+import { resolveTranslationTarget } from './language';
 import { replyLineMessage, fetchLineBotInfo } from './clients/line';
 import { translateWithFallback } from './clients/openai';
 import { getConfig, validateRequiredEnv } from './config';
@@ -150,8 +151,10 @@ async function handleLineEvent(event: LineEvent, env: Env, config: RuntimeConfig
 		return;
 	}
 
+	const targetLanguage = resolveTranslationTarget(normalized.text, env, normalized.command);
 	const result = await translateWithFallback(env, {
-		systemPrompt: buildSystemPrompt(env, normalized.command, normalized.styleOverride),
+		targetLanguage,
+		systemPrompt: buildSystemPrompt(env, normalized.command, normalized.styleOverride, targetLanguage),
 		userText: normalized.text,
 		maxOutputTokens: config.maxOutputTokens,
 		timeoutMs: config.openAiTimeoutMs,
