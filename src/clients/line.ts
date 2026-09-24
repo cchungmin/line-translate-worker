@@ -1,3 +1,4 @@
+import { controlQuickReply } from '../controls';
 import type { Env } from '../types';
 import type { LineBotInfo } from '../utils';
 
@@ -7,6 +8,7 @@ export async function replyLineMessage(
 	replyToken: string,
 	text: string,
 	env: Env,
+	showControls = false,
 ): Promise<{ ok: true } | { ok: false; status: number; errorType?: 'timeout' | 'network' }> {
 	const controller = new AbortController();
 	const timeoutId = setTimeout(() => controller.abort(), LINE_TIMEOUT_MS);
@@ -20,7 +22,7 @@ export async function replyLineMessage(
 			signal: controller.signal,
 			body: JSON.stringify({
 				replyToken,
-				messages: [{ type: 'text', text: text.slice(0, 5000) }],
+				messages: [{ type: 'text', text: text.slice(0, 5000), ...(showControls ? { quickReply: controlQuickReply } : {}) }],
 			}),
 		});
 

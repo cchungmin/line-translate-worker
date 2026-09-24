@@ -21,11 +21,11 @@ export function getConfig(env: Env): AppConfig {
 	return {
 		maxInputChars: parsePositiveInt(env.MAX_INPUT_CHARS, DEFAULT_MAX_INPUT_CHARS),
 		maxOutputTokens: parsePositiveInt(env.MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS),
-		openAiTimeoutMs: parsePositiveInt(env.OPENAI_TIMEOUT_MS, DEFAULT_OPENAI_TIMEOUT_MS),
-		maxWebhookBodyBytes: parsePositiveInt(
+		openAiTimeoutMs: Math.min(parsePositiveInt(env.OPENAI_TIMEOUT_MS, DEFAULT_OPENAI_TIMEOUT_MS), 8000),
+		maxWebhookBodyBytes: Math.min(64 * 1024, parsePositiveInt(
 			env.MAX_WEBHOOK_BODY_BYTES,
 			DEFAULT_MAX_WEBHOOK_BODY_BYTES,
-		),
+		)),
 		rateLimitPerMin: parsePositiveInt(env.RATE_LIMIT_PER_MIN, DEFAULT_RATE_LIMIT_PER_MIN),
 		idempotencyTtlSeconds: parsePositiveInt(
 			env.IDEMPOTENCY_TTL_SECONDS,

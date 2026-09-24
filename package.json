@@ -8,12 +8,13 @@
 		"node": ">=24.0.0"
 	},
 	"scripts": {
-		"deploy": "wrangler deploy",
+		"deploy": "node scripts/deploy.mjs",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"test": "vitest",
 		"typecheck": "tsc --noEmit && tsc --noEmit -p test/tsconfig.json",
-		"cf-typegen": "wrangler types"
+		"cf-typegen": "wrangler types",
+		"test:release": "node --test test-release/*.test.mjs"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.22.0",
