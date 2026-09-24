@@ -30,7 +30,7 @@ LINE bot translation worker powered by OpenAI and Cloudflare Workers.
 
 ## Runtime Vars (`wrangler.jsonc`)
 
-- `OPENAI_MODEL` (current default: `gpt-4o-mini`)
+- `OPENAI_MODEL` (current default: `gpt-6-luna`; uses `reasoning_effort: none` and `max_completion_tokens` for short translation requests)
 - `OPENAI_FALLBACK_MODEL` (current default: `gpt-4.1-mini`)
 - `TRANSLATION_MODE` (`auto | ja2zh | zh2ja`)
 - `TRANSLATION_STYLE` (`business | casual | neutral | polite`)
