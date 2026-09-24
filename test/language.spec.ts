@@ -6,10 +6,10 @@ import type { Env } from '../src/types';
 const env = { TRANSLATION_MODE: 'auto', TRIGGER_MODE: 'direct' } as Env;
 
 describe('translation language routing', () => {
-	it.each(['你能自動翻譯了嗎？', '好', '明天見', '自動翻訳', 'Can you translate?', '看這個 https://example.com/かな'])('defaults to Japanese: %s', (text) => {
+	it.each(['Can you translate?', 'https://example.com/かな'])('defaults to Japanese: %s', (text) => {
 		expect(resolveTranslationTarget(text, env, null)).toBe('ja');
 	});
-	it.each(['自動翻訳できるようになった？', '「ありがとう」是什麼意思？'])('keeps kana/mixed text inside the Japanese/Chinese pair: %s', (text) => {
+	it.each(['你能自動翻譯了嗎？', '好', '了解', '承知', '明日会議', '東京駅', '自動翻訳できるようになった？', '「ありがとう」是什麼意思？'])('keeps CJK text inside the Japanese/Chinese pair: %s', (text) => {
 		expect(resolveTranslationTarget(text, env, null)).toBe('auto');
 		expect(buildSystemPrompt(env, null, null, 'auto')).toContain('不可翻成英文');
 	});
