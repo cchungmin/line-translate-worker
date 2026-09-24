@@ -1,0 +1,7 @@
+# LINE Translate cover v2
+
+Created with the built-in imagegen tool, using line-translate-icon-v2.png as a style reference. Original generated PNG is preserved unchanged. The LINE profile editor crops it to a centered 2:1 banner.
+
+## Final prompt
+
+Use case: logo-brand. Create a finished cover photo for a Japanese–Traditional Chinese translation LINE bot, coordinated with the attached icon (reference image for palette, rounded speech-bubble geometry and restrained modern flat style only; do not reproduce the square icon). Landscape canvas, approximately 1080x878 aspect ratio. Cream background with broad clean green and dark forest-green rounded shapes at the outer edges, subtle graphic rhythm. In the central horizontal band, a friendly elegant conversation between two rounded speech bubbles: a green bubble with the exact Traditional Chinese text "你好", and a cream bubble outlined in dark green with the exact Japanese text "こんにちは". Bold beautiful clear rounded typography, balanced spacing, small subtle curved connecting line suggesting exchange. All essential text and bubbles must fit within the central 75% width and central 38% height so the artwork survives a wide banner crop. Generous negative space above and below. Sophisticated minimal identity, warm approachable messaging, visually compatible with the reference icon, flat solid colors. No mascot, no robot, no official LINE logo, no wordmark, no additional text, no mockup, no watermark, no 3D. Deliver the artwork only.

@@ -1,7 +1,8 @@
+import { parseChatCommand, hasTranslatableText, modeHelp } from './controls';
 import { replyLineMessage, fetchLineBotInfo } from './clients/line';
 import { translateWithFallback } from './clients/openai';
 import { getConfig, validateRequiredEnv } from './config';
-import { claimTranslationSlot } from './guards';
+import { claimConversationEvent } from './guards';
 import { log } from './logger';
 import type { Env, ExecutionContext, ExportedHandler } from './types';
 import {
@@ -10,6 +11,7 @@ import {
 	normalizeUserText,
 	readRequestBodyWithinLimit,
 	shouldTranslateEvent,
+	hasExplicitTrigger,
 	type LineEvent,
 	type LineWebhookPayload,
 } from './utils';
@@ -90,7 +92,8 @@ async function handleLineEvents(events: LineEvent[], env: Env, config: RuntimeCo
 }
 
 async function handleLineEvent(event: LineEvent, env: Env, config: RuntimeConfig): Promise<void> {
-	if (event.type !== 'message' || event.message?.type !== 'text') {
+	const welcome = event.type === 'join' || event.type === 'follow';
+	if (!welcome && (event.type !== 'message' || event.message?.type !== 'text')) {
 		return;
 	}
 
@@ -99,38 +102,35 @@ async function handleLineEvent(event: LineEvent, env: Env, config: RuntimeConfig
 		sourceType: event.source?.type ?? '',
 	});
 
-	if (!shouldTranslateEvent(event, env)) {
-		log(env, 'info', 'event_skipped_trigger_not_matched');
-		return;
-	}
-
-	const normalized = normalizeUserText(event, env);
+	const command = welcome ? { control: 'help' as const } : parseChatCommand(event.message?.text ?? '');
+	const control = command && 'control' in command ? command.control : undefined;
+	const singleText = command && 'text' in command ? command.text : undefined;
+	const normalized = singleText !== undefined
+		? { text: singleText, command: null, styleOverride: null }
+		: normalizeUserText(event, env);
 	log(env, 'info', 'event_normalized', {
 		command: normalized.command ?? '',
 		styleOverride: normalized.styleOverride ?? '',
 		inputLength: normalized.text.length,
 	});
 
-	if (!normalized.text) {
+	if (!control && (!normalized.text || !hasTranslatableText(normalized.text))) {
 		return;
 	}
 
-	if (normalized.text.length > config.maxInputChars) {
-		await maybeReplyError(
-			event.replyToken,
-			`訊息太長，請控制在 ${config.maxInputChars} 字內再試。`,
-			env,
-			config,
-		);
-		return;
-	}
-
-	const slot = await claimTranslationSlot(
+	const claim = await claimConversationEvent(
 		env.TRANSLATION_GUARD,
 		event,
 		config.rateLimitPerMin,
 		config.idempotencyTtlSeconds,
+		{
+			defaultAuto: shouldTranslateEvent({ ...event, message: { type: 'text', text: '' } }, env),
+			explicit: singleText !== undefined || hasExplicitTrigger(event, env),
+			control,
+		},
 	);
+	const slot = claim.decision;
+	if (slot === 'skipped') return;
 	if (slot === 'unavailable') {
 		log(env, 'error', 'translation_guard_unavailable', {
 			webhookEventId: event.webhookEventId ?? '',
@@ -146,12 +146,30 @@ async function handleLineEvent(event: LineEvent, env: Env, config: RuntimeConfig
 			sourceType: event.source?.type ?? '',
 			webhookEventId: event.webhookEventId ?? '',
 		});
-		await maybeReplyError(event.replyToken, '請稍後再試，訊息太頻繁。', env, config);
+		await maybeReplyError(event.replyToken, '請稍後再試，訊息太頻繁。\n送信が多すぎます。少し待ってからお試しください。', env, config);
+		return;
+	}
+
+	if (control) {
+		if (claim.mode && event.replyToken && event.replyToken !== '00000000000000000000000000000000') {
+			const reply = await replyLineMessage(event.replyToken, modeHelp(claim.mode, welcome), env, true);
+			if (!reply.ok) log(env, 'warn', 'line_control_reply_failed', { status: reply.status });
+		}
+		return;
+	}
+
+	if (normalized.text.length > config.maxInputChars) {
+		await maybeReplyError(
+			event.replyToken,
+			`訊息太長，請控制在 ${config.maxInputChars} 字內再試。\n${config.maxInputChars} 文字以内で送信してください。`,
+			env,
+			config,
+		);
 		return;
 	}
 
 	const result = await translateWithFallback(env, {
-		systemPrompt: buildSystemPrompt(env, normalized.command, normalized.styleOverride),
+		systemPrompt: buildSystemPrompt(singleText !== undefined ? { ...env, TRANSLATION_MODE: 'auto' } : env, normalized.command, normalized.styleOverride),
 		userText: normalized.text,
 		maxOutputTokens: config.maxOutputTokens,
 		timeoutMs: config.openAiTimeoutMs,
@@ -186,12 +204,12 @@ async function handleLineEvent(event: LineEvent, env: Env, config: RuntimeConfig
 
 function mapOpenAiError(errorType: 'timeout' | 'quota' | 'upstream' | 'network' | 'invalid_response'): string {
 	if (errorType === 'quota') {
-		return '翻譯服務目前額度不足，請稍後再試。';
+		return '翻譯服務目前額度不足，請稍後再試。\n翻訳サービスの利用上限に達しました。しばらくしてからお試しください。';
 	}
 	if (errorType === 'timeout') {
-		return '翻譯服務回應逾時，請稍後再試。';
+		return '翻譯服務回應逾時，請稍後再試。\n翻訳がタイムアウトしました。もう一度お試しください。';
 	}
-	return '翻譯服務暫時忙碌，請稍後再試。';
+	return '翻譯服務暫時忙碌，請稍後再試。\n翻訳サービスが混み合っています。しばらくしてからお試しください。';
 }
 
 async function maybeReplyError(

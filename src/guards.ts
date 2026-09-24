@@ -1,15 +1,22 @@
+import type { Control, ConversationMode } from './controls';
 import type { DurableObjectStateLike, Env } from './types';
 import type { LineEvent } from './utils';
 
-type GuardDecision = 'allowed' | 'duplicate' | 'rate_limited' | 'unavailable';
+type GuardDecision = 'allowed' | 'duplicate' | 'rate_limited' | 'unavailable' | 'skipped';
+
+export type ConversationPolicy = { defaultAuto: boolean; explicit: boolean; control?: Control };
+export type GuardResult = { decision: GuardDecision; mode?: ConversationMode };
 
 type GuardRequest = {
+	policy?: ConversationPolicy;
 	eventId: string;
 	rateLimitPerMinute: number;
 	idempotencyTtlSeconds: number;
 };
 
 type GuardState = {
+	mode?: ConversationMode;
+	controlCount?: number;
 	windowStartMs: number;
 	windowCount: number;
 	eventExpirations: Record<string, number>;
@@ -24,27 +31,31 @@ export async function claimTranslationSlot(
 	rateLimitPerMinute: number,
 	idempotencyTtlSeconds: number,
 ): Promise<GuardDecision> {
+	return (await claimConversationEvent(guardNamespace, event, rateLimitPerMinute, idempotencyTtlSeconds)).decision;
+}
+
+export async function claimConversationEvent(
+	guardNamespace: Env['TRANSLATION_GUARD'],
+	event: LineEvent,
+	rateLimitPerMinute: number,
+	idempotencyTtlSeconds: number,
+	policy?: ConversationPolicy,
+): Promise<GuardResult> {
 	const partition = getGuardPartition(event);
 	const eventId = event.webhookEventId?.trim();
-	if (!guardNamespace || !partition || !eventId) {
-		return 'unavailable';
-	}
-
+	if (!guardNamespace || !partition || !eventId) return { decision: 'unavailable' };
 	try {
 		const stub = guardNamespace.get(guardNamespace.idFromName(partition));
 		const response = await stub.fetch('https://translation-guard/check', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ eventId, rateLimitPerMinute, idempotencyTtlSeconds } satisfies GuardRequest),
+			body: JSON.stringify({ eventId, rateLimitPerMinute, idempotencyTtlSeconds, policy } satisfies GuardRequest),
 		});
-		if (!response.ok) {
-			return 'unavailable';
-		}
-
-		const result = (await response.json()) as { decision?: GuardDecision };
-		return isGuardDecision(result.decision) ? result.decision : 'unavailable';
+		if (!response.ok) return { decision: 'unavailable' };
+		const result = (await response.json()) as GuardResult;
+		return isGuardDecision(result.decision) ? result : { decision: 'unavailable' };
 	} catch {
-		return 'unavailable';
+		return { decision: 'unavailable' };
 	}
 }
 
@@ -82,6 +93,8 @@ export class TranslationGuard {
 			}
 		}
 
+		let mode = guardState.mode ?? { auto: input.policy?.defaultAuto ?? true };
+		if (mode.resumeAt !== undefined && mode.resumeAt <= now) mode = { auto: true };
 		const eventKey = encodeURIComponent(input.eventId);
 		if (guardState.eventExpirations[eventKey]) {
 			return jsonDecision('duplicate');
@@ -90,15 +103,24 @@ export class TranslationGuard {
 		if (guardState.windowStartMs !== windowStartMs) {
 			guardState.windowStartMs = windowStartMs;
 			guardState.windowCount = 0;
+			guardState.controlCount = 0;
 		}
-		if (guardState.windowCount >= input.rateLimitPerMinute) {
+		const control = input.policy?.control;
+		if (!control && input.policy && !input.policy.explicit && !mode.auto) return jsonDecision('skipped');
+		if ((input.policy?.control ? guardState.controlCount ?? 0 : guardState.windowCount) >= input.rateLimitPerMinute) {
 			return jsonDecision('rate_limited');
 		}
 
+		if (control === 'auto') mode = { auto: true };
+		if (control === 'pause') mode = { auto: false };
+		if (control === 'pause1h') mode = { auto: false, resumeAt: now + 3_600_000 };
+		// One write commits the setting, rate counters and event ID together.
+		if (input.policy) guardState.mode = mode;
 		guardState.eventExpirations[eventKey] = now + input.idempotencyTtlSeconds * 1000;
-		guardState.windowCount += 1;
+		if (control) guardState.controlCount = (guardState.controlCount ?? 0) + 1;
+		else guardState.windowCount += 1;
 		await this.state.storage.put(GUARD_STATE_KEY, guardState);
-		return jsonDecision('allowed');
+		return jsonDecision('allowed', mode);
 	}
 }
 
@@ -115,18 +137,22 @@ function getGuardPartition(event: LineEvent): string | null {
 	return null;
 }
 
-function jsonDecision(decision: Exclude<GuardDecision, 'unavailable'>): Response {
-	return new Response(JSON.stringify({ decision }), {
+function jsonDecision(decision: Exclude<GuardDecision, 'unavailable'>, mode?: ConversationMode): Response {
+	return new Response(JSON.stringify({ decision, mode }), {
 		headers: { 'Content-Type': 'application/json' },
 	});
 }
 
 function isGuardDecision(value: unknown): value is GuardDecision {
-	return value === 'allowed' || value === 'duplicate' || value === 'rate_limited';
+	return value === 'allowed' || value === 'duplicate' || value === 'rate_limited' || value === 'skipped';
 }
 
 function isValidGuardRequest(value: GuardRequest): boolean {
 	return (
+		(value?.policy === undefined || (
+			typeof value.policy?.defaultAuto === 'boolean' && typeof value.policy.explicit === 'boolean' &&
+			(value.policy.control === undefined || ['auto', 'pause', 'pause1h', 'help'].includes(value.policy.control))
+		)) &&
 		typeof value?.eventId === 'string' &&
 		value.eventId.length > 0 &&
 		value.eventId.length <= 256 &&

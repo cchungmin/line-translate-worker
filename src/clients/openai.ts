@@ -68,6 +68,19 @@ async function requestTranslation(env: Env, options: RequestOptions): Promise<Op
 					{ role: 'user', content: formatTranslationInput(options.userText) },
 				],
 				temperature: 0,
+				response_format: {
+					type: 'json_schema',
+					json_schema: {
+						name: 'translation',
+						strict: true,
+						schema: {
+							type: 'object',
+							properties: { translation: { type: 'string' } },
+							required: ['translation'],
+							additionalProperties: false,
+						},
+					},
+				},
 				max_tokens: options.maxOutputTokens,
 				store: false,
 			}),
@@ -97,10 +110,9 @@ async function requestTranslation(env: Env, options: RequestOptions): Promise<Op
 			};
 		}
 
-		const data = (await response.json()) as {
-			choices?: Array<{ message?: { content?: string } }>;
-		};
-		const text = data.choices?.[0]?.message?.content?.trim();
+		// Treat malformed, refused, or truncated responses as failed translations.
+		const data: unknown = await response.json().catch(() => null);
+		const text = parseTranslation(data);
 		if (!text) {
 			return {
 				ok: false,
@@ -128,9 +140,33 @@ async function requestTranslation(env: Env, options: RequestOptions): Promise<Op
 	}
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseTranslation(data: unknown): string | null {
+	if (!isRecord(data) || !Array.isArray(data.choices)) return null;
+	const choice: unknown = data.choices[0];
+	if (!isRecord(choice) || choice.finish_reason !== 'stop' || !isRecord(choice.message)) return null;
+	const { content, refusal } = choice.message;
+	if (refusal || typeof content !== 'string') return null;
+	try {
+		const result: unknown = JSON.parse(content);
+		if (!isRecord(result) || Object.keys(result).length !== 1 || typeof result.translation !== 'string') return null;
+		return result.translation.trim() || null;
+	} catch {
+		return null;
+	}
+}
+
 function isRetryable(result: OpenAiResult): boolean {
 	if (result.ok) {
 		return false;
 	}
-	return result.errorType === 'timeout' || result.errorType === 'network' || result.errorType === 'upstream';
+	return (
+		result.errorType === 'timeout' ||
+		result.errorType === 'network' ||
+		result.errorType === 'upstream' ||
+		result.errorType === 'invalid_response'
+	);
 }
