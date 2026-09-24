@@ -172,3 +172,23 @@ describe('bilingual conversation flow', () => {
 		expect(upstreams).not.toHaveBeenCalled();
 	});
 });
+
+
+describe('reported Chinese-to-English regression', () => {
+	it('sends a fixed Japanese target and only delivers the Japanese fallback', async () => {
+		let attempts = 0;
+		const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+			if (String(url).includes('api.openai.com')) return Response.json({ choices: [{ finish_reason: 'stop', message: {
+				content: JSON.stringify({ translation: attempts++ === 0 ? 'Can you translate automatically?' : '自動翻訳できるようになった？' }),
+			} }] });
+			return Response.json({});
+		});
+		await deliver([event('你能自動翻譯了嗎？')]);
+		const requests = fetch.mock.calls.filter(([url]) => String(url).includes('api.openai.com'));
+		expect(requests).toHaveLength(2);
+		for (const [, init] of requests) expect(JSON.parse(String(init?.body)).messages[0].content).toContain('目標語言固定為日文');
+		const replies = fetch.mock.calls.filter(([url]) => String(url).includes('api.line.me'));
+		expect(replies).toHaveLength(1);
+		expect(JSON.parse(String(replies[0][1]?.body)).messages[0].text).toBe('自動翻訳できるようになった？');
+	});
+});

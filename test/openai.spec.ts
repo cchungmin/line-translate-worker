@@ -84,3 +84,23 @@ describe('OpenAI translation response contract', () => {
 		expect(fetch).toHaveBeenCalledTimes(2);
 	});
 });
+
+
+describe('translation language validation', () => {
+	it('retries the reported wrong-language response once and returns Japanese', async () => {
+		const fetch = vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(completion(JSON.stringify({ translation: 'Can you translate automatically?' })))
+			.mockResolvedValueOnce(completion(JSON.stringify({ translation: '自動翻訳できるようになった？' })));
+		expect(await translateWithFallback({ ...env, OPENAI_FALLBACK_MODEL: 'gpt-4.1-mini' }, {
+			...options, userText: '你能自動翻譯了嗎？', targetLanguage: 'ja',
+		})).toMatchObject({ ok: true, text: '自動翻訳できるようになった？', model: 'gpt-4.1-mini' });
+		expect(fetch).toHaveBeenCalledTimes(2);
+	});
+	it('does not forward English when both attempts violate the requested target', async () => {
+		const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => completion(JSON.stringify({ translation: 'Can you translate automatically?' })));
+		expect(await translateWithFallback({ ...env, OPENAI_FALLBACK_MODEL: 'gpt-4.1-mini' }, {
+			...options, userText: '你能自動翻譯了嗎？', targetLanguage: 'ja',
+		})).toMatchObject({ ok: false, errorType: 'invalid_response' });
+		expect(fetch).toHaveBeenCalledTimes(2);
+	});
+});

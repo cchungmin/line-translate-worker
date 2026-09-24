@@ -1,3 +1,4 @@
+import { resolveTranslationTarget } from './language';
 import { parseChatCommand, hasTranslatableText, modeHelp } from './controls';
 import { replyLineMessage, fetchLineBotInfo } from './clients/line';
 import { translateWithFallback } from './clients/openai';
@@ -168,8 +169,11 @@ async function handleLineEvent(event: LineEvent, env: Env, config: RuntimeConfig
 		return;
 	}
 
+	const directionEnv = singleText !== undefined ? { ...env, TRANSLATION_MODE: 'auto' as const } : env;
+	const targetLanguage = resolveTranslationTarget(normalized.text, directionEnv, normalized.command);
 	const result = await translateWithFallback(env, {
-		systemPrompt: buildSystemPrompt(singleText !== undefined ? { ...env, TRANSLATION_MODE: 'auto' } : env, normalized.command, normalized.styleOverride),
+		targetLanguage,
+		systemPrompt: buildSystemPrompt(directionEnv, normalized.command, normalized.styleOverride, targetLanguage),
 		userText: normalized.text,
 		maxOutputTokens: config.maxOutputTokens,
 		timeoutMs: config.openAiTimeoutMs,
