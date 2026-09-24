@@ -104,3 +104,18 @@ describe('translation language validation', () => {
 		expect(fetch).toHaveBeenCalledTimes(2);
 	});
 });
+
+
+it('does not start a fallback after the reply budget has expired', async () => {
+	let now = Date.now();
+	const deadline = now + 1000;
+	vi.spyOn(Date, 'now').mockImplementation(() => now);
+	const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+		now = deadline;
+		return completion('{"sourceText":"bad"}');
+	});
+	expect(await translateWithFallback({ ...env, OPENAI_FALLBACK_MODEL: 'gpt-4.1-mini' }, {
+		...options, deadlineMs: deadline,
+	})).toMatchObject({ ok: false, errorType: 'timeout' });
+	expect(fetch).toHaveBeenCalledTimes(1);
+});

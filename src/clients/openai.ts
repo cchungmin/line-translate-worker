@@ -15,6 +15,7 @@ type OpenAiResult =
 
 type OpenAiOptions = {
 	targetLanguage?: TranslationTarget;
+	deadlineMs?: number;
 	systemPrompt: string;
 	userText: string;
 	maxOutputTokens: number;
@@ -53,8 +54,10 @@ type RequestOptions = OpenAiOptions & {
 
 async function requestTranslation(env: Env, options: RequestOptions): Promise<OpenAiResult> {
 	const startedAt = Date.now();
+	const remainingMs = Math.min(options.timeoutMs, (options.deadlineMs ?? Infinity) - startedAt);
+	if (remainingMs <= 0) return { ok: false, errorType: 'timeout', model: options.model, durationMs: 0 };
 	const controller = new AbortController();
-	const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs);
+	const timeoutId = setTimeout(() => controller.abort(), remainingMs);
 
 	try {
 		const response = await fetch('https://api.openai.com/v1/chat/completions', {
