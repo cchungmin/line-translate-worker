@@ -1,3 +1,4 @@
+import type { LineEvent } from './utils';
 export interface Env {
 	LINE_CHANNEL_SECRET: string;
 	LINE_CHANNEL_ACCESS_TOKEN: string;
@@ -8,6 +9,8 @@ export interface Env {
 	TRANSLATION_STYLE?: 'business' | 'casual' | 'neutral' | 'polite';
 	TRIGGER_MODE?: 'all' | 'mention' | 'direct';
 	TRIGGER_MENTION?: string;
+	AUTO_TRANSLATION_ENABLED?: 'true' | 'false';
+	LINE_EVENT_QUEUE?: { send(body: WebhookJob): Promise<unknown> };
 	GROUP_TRANSLATION_ENABLED?: 'true' | 'false';
 	DEBUG_LOG?: 'true' | 'false';
 	LINE_BOT_USER_ID?: string;
@@ -26,7 +29,11 @@ export interface ExecutionContext {
 	passThroughOnException?(): void;
 }
 
+export type WebhookJob = { version: 1; receivedAt: number; events: LineEvent[] };
+export type QueueBatch = { messages: Array<{ body: WebhookJob; attempts: number; ack(): void; retry(options: { delaySeconds: number }): void }> };
+
 export type ExportedHandler<E = Env> = {
+	queue?(batch: QueueBatch, env: E, ctx: ExecutionContext): Promise<void>;
 	fetch(request: Request, env: E, ctx: ExecutionContext): Response | Promise<Response>;
 };
 

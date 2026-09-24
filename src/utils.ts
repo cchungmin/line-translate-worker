@@ -12,6 +12,7 @@ export type TranslationStyle = NonNullable<Env['TRANSLATION_STYLE']>;
 
 export type LineEvent = {
 	webhookEventId?: string;
+	timestamp?: number;
 	type?: string;
 	replyToken?: string;
 	source?: {
@@ -215,7 +216,7 @@ function getTriggerMode(env: Env): NonNullable<Env['TRIGGER_MODE']> {
 	return DEFAULT_TRIGGER_MODE;
 }
 
-function hasExplicitTrigger(event: LineEvent, env: Env): boolean {
+export function hasExplicitTrigger(event: LineEvent, env: Env): boolean {
 	const text = event.message?.text ?? '';
 	return Boolean(parseCommand(text).command) || hasBotMentionMetadata(event, env) || text.includes(getTriggerMention(env));
 }
