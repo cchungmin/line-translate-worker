@@ -17,6 +17,29 @@ const completion = (content: unknown, finish_reason = 'stop', refusal: string | 
 afterEach(() => vi.restoreAllMocks());
 
 describe('OpenAI translation response contract', () => {
+	it.each([undefined, 'gpt-6-luna'])('uses Luna without reasoning for model setting %s', async (model) => {
+		const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(completion(JSON.stringify({ translation: translated })));
+		expect(await translateWithFallback({ ...env, OPENAI_MODEL: model }, options))
+			.toMatchObject({ ok: true, text: translated, model: 'gpt-6-luna' });
+		const body = JSON.parse(String(fetch.mock.calls[0][1]?.body));
+		expect(body).toMatchObject({ model: 'gpt-6-luna', reasoning_effort: 'none', max_completion_tokens: 600, temperature: 0, store: false });
+		expect(body).not.toHaveProperty('max_tokens');
+		expect(body.response_format.json_schema.strict).toBe(true);
+	});
+
+	it('keeps legacy request parameters when Luna fails and the fallback takes over', async () => {
+		const fetch = vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(Response.json({ error: { code: 'model_not_found' } }, { status: 404 }))
+			.mockResolvedValueOnce(completion(JSON.stringify({ translation: translated })));
+		expect(await translateWithFallback({ ...env, OPENAI_MODEL: 'gpt-6-luna', OPENAI_FALLBACK_MODEL: 'gpt-4.1-mini' }, options))
+			.toMatchObject({ ok: true, text: translated, model: 'gpt-4.1-mini' });
+		expect(fetch).toHaveBeenCalledTimes(2);
+		const body = JSON.parse(String(fetch.mock.calls[1][1]?.body));
+		expect(body).toMatchObject({ model: 'gpt-4.1-mini', max_tokens: 600, temperature: 0 });
+		expect(body).not.toHaveProperty('reasoning_effort');
+		expect(body).not.toHaveProperty('max_completion_tokens');
+	});
+
 	it('requests a strict schema and extracts only the translated text', async () => {
 		const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(completion(JSON.stringify({ translation: translated })));
 		expect(await translateWithFallback(env, options)).toMatchObject({ ok: true, text: translated });

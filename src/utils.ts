@@ -1,7 +1,7 @@
 import type { TranslationTarget } from './language';
 import type { Env } from './types';
 
-export const DEFAULT_MODEL = 'gpt-4o-mini';
+export const DEFAULT_MODEL = 'gpt-6-luna';
 export const DEFAULT_TRANSLATION_MODE: NonNullable<Env['TRANSLATION_MODE']> = 'auto';
 export const DEFAULT_TRANSLATION_STYLE: NonNullable<Env['TRANSLATION_STYLE']> = 'business';
 export const DEFAULT_TRIGGER_MODE: NonNullable<Env['TRIGGER_MODE']> = 'mention';

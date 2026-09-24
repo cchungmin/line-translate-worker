@@ -86,7 +86,10 @@ async function requestTranslation(env: Env, options: RequestOptions): Promise<Op
 						},
 					},
 				},
-				max_tokens: options.maxOutputTokens,
+				// Luna defaults to medium reasoning; simple translation should not pay that latency.
+				...(options.model === 'gpt-6-luna'
+					? { reasoning_effort: 'none', max_completion_tokens: options.maxOutputTokens }
+					: { max_tokens: options.maxOutputTokens }),
 				store: false,
 			}),
 			signal: controller.signal,
