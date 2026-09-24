@@ -139,3 +139,14 @@ describe('persisted conversation controls', () => {
 		expect((await claim()).decision).toBe('skipped');
 	});
 });
+
+
+it('ignores an older queued mode change even after a newer command has been processed', async () => {
+	const source = { type: 'group', groupId: crypto.randomUUID() };
+	const claim = (control: 'auto' | 'pause' | 'help', eventTime: number) => claimConversationEvent(env.TRANSLATION_GUARD,
+		{ source, webhookEventId: crypto.randomUUID() }, 20, 300, { defaultAuto: true, explicit: false, control, eventTime });
+	expect((await claim('pause', 2000)).mode?.auto).toBe(false);
+	expect((await claim('auto', 1000)).decision).toBe('skipped');
+	expect((await claim('help', 3000)).mode?.auto).toBe(false);
+	expect((await claim('auto', 2500)).mode?.auto).toBe(true);
+});

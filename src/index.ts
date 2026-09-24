@@ -5,7 +5,7 @@ import { translateWithFallback } from './clients/openai';
 import { getConfig, validateRequiredEnv } from './config';
 import { claimConversationEvent } from './guards';
 import { log } from './logger';
-import type { Env, ExecutionContext, ExportedHandler } from './types';
+import type { Env, ExecutionContext, ExportedHandler, QueueBatch } from './types';
 import {
 	buildSystemPrompt,
 	isValidLineSignature,
@@ -18,7 +18,7 @@ import {
 } from './utils';
 
 export default {
-	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+	async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
 		const requestStart = Date.now();
 		const config = getConfig(env);
 
@@ -52,10 +52,44 @@ export default {
 			return new Response('Bad Request', { status: 400 });
 		}
 
-		ctx.waitUntil(handleLineEvents(payload.events ?? [], env, config));
+		if (!Array.isArray(payload?.events)) return new Response('Bad Request', { status: 400 });
+		const events = payload.events.filter((event) => event && (event.type === 'join' || event.type === 'follow' ||
+			(event.type === 'message' && event.message?.type === 'text')));
+		if (events.length) {
+			if (!env.LINE_EVENT_QUEUE) return new Response('Queue Unavailable', { status: 503 });
+			try {
+				// Acknowledge LINE only after the complete batch is durably accepted.
+				await env.LINE_EVENT_QUEUE.send({ version: 1, receivedAt: requestStart, events });
+			} catch {
+				log(env, 'error', 'webhook_enqueue_failed');
+				return new Response('Queue Unavailable', { status: 503 });
+			}
+		}
 
 		log(env, 'info', 'webhook_accepted', { durationMs: Date.now() - requestStart });
 		return new Response('OK');
+	},
+	async queue(batch: QueueBatch, env: Env): Promise<void> {
+		const config = getConfig(env);
+		for (const message of batch.messages) {
+			const job = message.body;
+			if (job?.version !== 1 || !Number.isFinite(job.receivedAt) || !Array.isArray(job.events)) {
+				log(env, 'error', 'invalid_queue_job');
+				message.ack();
+				continue;
+			}
+			try {
+				await handleLineEvents(job.events, env, config, job.receivedAt);
+				message.ack();
+			} catch {
+				if (message.attempts >= 4 || Date.now() >= job.receivedAt + 55_000) {
+					log(env, 'error', 'queue_retry_exhausted');
+					message.ack();
+				} else {
+					message.retry({ delaySeconds: 1 });
+				}
+			}
+		}
 	},
 } satisfies ExportedHandler<Env>;
 
@@ -81,18 +115,26 @@ async function handleGetRequest(request: Request, env: Env): Promise<Response> {
 
 type RuntimeConfig = ReturnType<typeof getConfig>;
 
-async function handleLineEvents(events: LineEvent[], env: Env, config: RuntimeConfig): Promise<void> {
+class RetryableEventError extends Error {}
+
+async function handleLineEvents(events: LineEvent[], env: Env, config: RuntimeConfig, receivedAt: number): Promise<void> {
 	for (const event of events) {
 		try {
-			await handleLineEvent(event, env, config);
-		} catch {
+			await handleLineEvent(event, env, config, receivedAt);
+		} catch (error) {
+			if (error instanceof RetryableEventError) throw error;
 			// Do not include exception text: upstream errors can contain sensitive data.
 			log(env, 'error', 'event_processing_failed');
 		}
 	}
 }
 
-async function handleLineEvent(event: LineEvent, env: Env, config: RuntimeConfig): Promise<void> {
+async function handleLineEvent(event: LineEvent, env: Env, config: RuntimeConfig, receivedAt: number): Promise<void> {
+	const replyDeadline = receivedAt + 55_000;
+	if (Date.now() >= replyDeadline) {
+		log(env, 'warn', 'event_expired_before_processing', { webhookEventId: event.webhookEventId ?? '' });
+		return;
+	}
 	const welcome = event.type === 'join' || event.type === 'follow';
 	if (!welcome && (event.type !== 'message' || event.message?.type !== 'text')) {
 		return;
@@ -119,6 +161,19 @@ async function handleLineEvent(event: LineEvent, env: Env, config: RuntimeConfig
 		return;
 	}
 
+	const explicit = singleText !== undefined || hasExplicitTrigger(event, env);
+	const group = event.source?.type === 'group' || event.source?.type === 'room';
+	const replyConfig = { ...config, errorReplyEnabled: config.errorReplyEnabled && (!group || explicit || Boolean(control)) };
+	if (!control && !explicit && env.AUTO_TRANSLATION_ENABLED === 'false') return;
+	// Reject oversize input before reserving a translation slot. Automatic chatter
+	// is silent, including paused conversations, and never reaches the model.
+	if (!control && normalized.text.length > config.maxInputChars) {
+		log(env, 'warn', 'event_input_too_long', { inputLength: normalized.text.length });
+		if (explicit) await maybeReplyError(event.replyToken,
+			`訊息太長，請控制在 ${config.maxInputChars} 字內再試。\n${config.maxInputChars} 文字以内で送信してください。`, env, replyConfig);
+		return;
+	}
+
 	const claim = await claimConversationEvent(
 		env.TRANSLATION_GUARD,
 		event,
@@ -126,7 +181,8 @@ async function handleLineEvent(event: LineEvent, env: Env, config: RuntimeConfig
 		config.idempotencyTtlSeconds,
 		{
 			defaultAuto: shouldTranslateEvent({ ...event, message: { type: 'text', text: '' } }, env),
-			explicit: singleText !== undefined || hasExplicitTrigger(event, env),
+			explicit,
+			eventTime: event.timestamp ?? receivedAt,
 			control,
 		},
 	);
@@ -136,7 +192,7 @@ async function handleLineEvent(event: LineEvent, env: Env, config: RuntimeConfig
 		log(env, 'error', 'translation_guard_unavailable', {
 			webhookEventId: event.webhookEventId ?? '',
 		});
-		return;
+		throw new RetryableEventError();
 	}
 	if (slot === 'duplicate') {
 		log(env, 'warn', 'event_skipped_duplicate', { webhookEventId: event.webhookEventId ?? '' });
@@ -147,25 +203,24 @@ async function handleLineEvent(event: LineEvent, env: Env, config: RuntimeConfig
 			sourceType: event.source?.type ?? '',
 			webhookEventId: event.webhookEventId ?? '',
 		});
-		await maybeReplyError(event.replyToken, '請稍後再試，訊息太頻繁。\n送信が多すぎます。少し待ってからお試しください。', env, config);
+		await maybeReplyError(event.replyToken, '請稍後再試，訊息太頻繁。\n送信が多すぎます。少し待ってからお試しください。', env, replyConfig);
 		return;
 	}
 
+	if (Date.now() >= replyDeadline) {
+		log(env, 'warn', 'event_expired_after_admission');
+		return;
+	}
 	if (control) {
 		if (claim.mode && event.replyToken && event.replyToken !== '00000000000000000000000000000000') {
-			const reply = await replyLineMessage(event.replyToken, modeHelp(claim.mode, welcome), env, true);
+			const disabled = env.AUTO_TRANSLATION_ENABLED === 'false';
+			const notice = disabled
+				? '系統已暫停自動翻譯；設定保留，仍可用 /t。\nシステム全体で自動翻訳停止中。設定は保存され、/t は利用できます。\n'
+				: '';
+			const text = notice + modeHelp(disabled ? { auto: false } : claim.mode, welcome);
+			const reply = await replyLineMessage(event.replyToken, text, env, true);
 			if (!reply.ok) log(env, 'warn', 'line_control_reply_failed', { status: reply.status });
 		}
-		return;
-	}
-
-	if (normalized.text.length > config.maxInputChars) {
-		await maybeReplyError(
-			event.replyToken,
-			`訊息太長，請控制在 ${config.maxInputChars} 字內再試。\n${config.maxInputChars} 文字以内で送信してください。`,
-			env,
-			config,
-		);
 		return;
 	}
 
@@ -173,6 +228,7 @@ async function handleLineEvent(event: LineEvent, env: Env, config: RuntimeConfig
 	const targetLanguage = resolveTranslationTarget(normalized.text, directionEnv, normalized.command);
 	const result = await translateWithFallback(env, {
 		targetLanguage,
+		deadlineMs: replyDeadline - 5000,
 		systemPrompt: buildSystemPrompt(directionEnv, normalized.command, normalized.styleOverride, targetLanguage),
 		userText: normalized.text,
 		maxOutputTokens: config.maxOutputTokens,
@@ -186,7 +242,16 @@ async function handleLineEvent(event: LineEvent, env: Env, config: RuntimeConfig
 			model: result.model,
 			durationMs: result.durationMs,
 		});
-		await maybeReplyError(event.replyToken, mapOpenAiError(result.errorType), env, config);
+		await maybeReplyError(event.replyToken, mapOpenAiError(result.errorType), env, replyConfig);
+		return;
+	}
+
+	if (!explicit && result.text.normalize('NFC').trim() === normalized.text.normalize('NFC').trim()) {
+		log(env, 'info', 'event_skipped_unchanged_translation');
+		return;
+	}
+	if (Date.now() >= replyDeadline) {
+		log(env, 'warn', 'event_expired_before_reply');
 		return;
 	}
 

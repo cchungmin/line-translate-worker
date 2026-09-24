@@ -24,7 +24,7 @@ LINE bot translation worker powered by OpenAI and Cloudflare Workers.
    - `pnpm exec wrangler secret put LINE_BOT_USER_ID`
 4. Deploy once to create the required Durable Object binding for atomic idempotency and rate limiting:
    - Run typecheck and tests, open a PR, and wait for CI before release.
-- `pnpm deploy` deploys the current checkout; record its Git commit and Wrangler version in the PR.
+- `pnpm deploy` requires a clean `main` checkout matching freshly fetched `origin/main`, and verifies that the queue exists before deploying. Feature branches and unreviewed local commits are rejected. `node scripts/deploy.mjs --check` runs only the Git preflight. Record the deployed Git commit and Wrangler version in the PR.
 - Verify the deployed version and the public health response. A health check does not exercise LINE/OpenAI credentials.
 - Roll back code with `pnpm exec wrangler rollback <previous-version-id>` if needed. Saved conversation modes survive code rollback; a pre-controls version ignores them.
 
@@ -38,6 +38,7 @@ LINE bot translation worker powered by OpenAI and Cloudflare Workers.
   - For private messages: `all` and `direct` translate automatically; `mention` requires an explicit tag.
   - Groups and rooms initially follow `GROUP_TRANSLATION_ENABLED`. Saved conversation settings override these defaults.
 - `TRIGGER_MENTION`
+- `AUTO_TRANSLATION_ENABLED` (`true | false`, default `true`): emergency upper bound for automatic translation in every conversation. `false` overrides saved `/auto` settings but keeps explicit `/t`, language tags and controls available. Restoring `true` restores each saved preference.
 - `GROUP_TRANSLATION_ENABLED` (`true | false`; deployed default: `true`, unset fallback: `false`)
   - `true`: automatically translate meaningful text in groups and rooms.
   - `false`: groups and rooms translate only when the bot is explicitly tagged (`@翻譯` or a command tag).
@@ -50,13 +51,13 @@ LINE bot translation worker powered by OpenAI and Cloudflare Workers.
 - `IDEMPOTENCY_TTL_SECONDS`
 - `ERROR_REPLY_ENABLED`
 
-The Worker explicitly sends `store: false` to OpenAI. It does not persist message text; the Durable Object stores conversation mode (including a timed pause deadline), event IDs with logical expiration timestamps, and rate-limit counters. Expired IDs are removed on a subsequent accepted request, so inactive conversations can retain expired IDs beyond the deduplication window.
+The Worker explicitly sends `store: false` to OpenAI. Message text is not stored in Durable Objects or logs. Pending webhook batches (including text and reply tokens) are temporarily persisted in Cloudflare Queues until acknowledged or expired; provision the queue with a 300-second retention limit as described below. The Durable Object stores conversation mode (including a timed pause deadline), event IDs with logical expiration timestamps, and rate-limit counters. Expired IDs are removed on a subsequent accepted request, so inactive conversations can retain expired IDs beyond the deduplication window.
 
 Translation responses use [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs) with a strict `translation` string field. Both configured models must support Chat Completions `json_schema`. The Worker validates completion status and the response schema, then sends only the field's text to LINE. Malformed, empty, refused, or truncated responses are rejected and can use the configured fallback model once; raw model output is never forwarded as an error recovery path. JSON that is part of the translated text itself is preserved.
 
 Translation responses use [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs) with a strict `translation` string field. Both configured models must support Chat Completions `json_schema`. The Worker validates completion status and the response schema, then sends only the field's text to LINE. Malformed, empty, refused, or truncated responses are rejected and can use the configured fallback model once; raw model output is never forwarded as an error recovery path. JSON that is part of the translated text itself is preserved.
 
-LINE API calls have a five-second timeout. A delivery or event-processing failure is logged without message text and does not stop subsequent events in the same batch. Failed replies are not automatically retried; this avoids duplicate delivery when a timeout leaves the upstream outcome unknown.
+LINE API calls have a five-second timeout. Unrequested automatic group/room translations fail silently (structured logs only); explicit commands and private-chat failures still receive errors when enabled. Oversize automatic messages are skipped before admission; explicit oversize requests receive an error without consuming a translation slot. Identical automatic translations are suppressed; explicit requests still receive the result. A delivery or event-processing failure is logged without message text and does not stop subsequent events in the same batch. Failed replies are not automatically retried; this avoids duplicate delivery when a timeout leaves the upstream outcome unknown.
 
 ## Shared controls / 共通操作
 
@@ -94,12 +95,13 @@ Private chats and groups now start with automatic Japanese ↔ Traditional Chine
 
 - `pnpm run typecheck`
 - `pnpm exec vitest run`
+- `pnpm run test:release`
 - CI runs both commands on pull requests and pushes to `main`.
 
 ## Deploy
 
 - Run typecheck and tests, open a PR, and wait for CI before release.
-- `pnpm deploy` deploys the current checkout; record its Git commit and Wrangler version in the PR.
+- `pnpm deploy` requires a clean `main` checkout matching freshly fetched `origin/main`, and verifies that the queue exists before deploying. Feature branches and unreviewed local commits are rejected. `node scripts/deploy.mjs --check` runs only the Git preflight. Record the deployed Git commit and Wrangler version in the PR.
 - Verify the deployed version and the public health response. A health check does not exercise LINE/OpenAI credentials.
 - Roll back code with `pnpm exec wrangler rollback <previous-version-id>` if needed. Saved conversation modes survive code rollback; a pre-controls version ignores them.
 - Continuous deployment is not configured yet. Add it separately after defining the Cloudflare environment and repository secrets.
@@ -137,3 +139,24 @@ Private chats and groups now start with automatic Japanese ↔ Traditional Chine
 For automatic Japanese/Traditional Chinese translation, all CJK input (including Han-only Japanese such as `了解`, `承知`, `明日会議`, and `東京駅`) uses model judgment restricted to that language pair: Chinese → Japanese and Japanese → Traditional Chinese, defaulting to Japanese only when ambiguous. Absence of kana does not identify the source language. Non-CJK input defaults to Japanese. English is never an automatic target. Explicit language tags and fixed `TRANSLATION_MODE` settings take precedence; language tags are recognized only at the beginning of the text after stripping the bot mention.
 
 A conservative output check rejects all-Latin sentences of at least three words for CJK input when English was not requested, and uses the configured fallback once. Short names, numbers, links, and Latin words already in the source are exempt. This catches the reported `你能自動翻譯了嗎？` → `Can you translate automatically?` regression; it is not a complete language or translation-quality detector. Tests simulate both wrong primary output and fallback recovery; they do not establish live model accuracy.
+
+
+## Durable webhook processing
+
+The signed webhook is acknowledged with HTTP 200 only after its complete supported-event batch has been accepted by `LINE_EVENT_QUEUE`; enqueue failure or a missing binding returns 503. Enable LINE webhook redelivery in the channel settings for retrying failed acceptance. Empty verification requests still return 200. Incoming bodies are capped at 64 KiB to fit safely inside a queue message.
+
+The queue consumer awaits each event in order, outside the HTTP `waitUntil` lifetime. The consumer batch size is one webhook, with no intentional batching delay and at most ten concurrent consumer invocations. Queues can reorder separate webhooks: timestamps prevent an older mode-changing command from overwriting a newer one; this is not a promise of global message ordering. Controls within the same webhook retain their original order.
+
+Reply tokens are time-sensitive. Work older than 55 seconds from webhook receipt is discarded with `event_expired_before_processing`, rather than spending on unusable replies. OpenAI attempts are capped at eight seconds each and share a deadline reserving five seconds for LINE. A slow or backlogged queue may still lose reply opportunities; durable acceptance does not guarantee an eventual LINE reply. Monitor `queue_retry_exhausted`, expiry logs and queue age. No push-message fallback is used.
+
+A guard failure before admission is retried up to three times with a one-second delay. Already claimed events are deduplicated. As before, admission is at-most-once within the configured TTL: an unexpected crash after claiming an event can leave that event unanswered, and uncertain LINE sends are not retried automatically. No full exactly-once delivery claim is made. There is no dead-letter queue retaining expired content.
+
+### First release after review
+
+1. Merge #26 first; retarget #25 to `main`, rerun CI, then merge #25. A merge commit for #26 preserves the shared ancestry; squash requires resolving the stacked history before #25 merges.
+2. Check out and fast-forward `main`, then run typecheck, Workers tests and release-preflight tests.
+3. Provision the new queue explicitly: `pnpm exec wrangler queues create line-translate-events --message-retention-period-secs 300`. Confirm the retention in Cloudflare before release. If the account plan rejects short retention, stop and resolve it; do not silently accept a longer default. No production queue has been created by this PR.
+4. Enable LINE webhook redelivery if it is off, then run `pnpm deploy` from clean synchronized `main`. Check the consumer binding, queue age, HTTP health and a real LINE translation.
+5. The emergency switch is `AUTO_TRANSLATION_ENABLED=false`; changing `GROUP_TRANSLATION_ENABLED` or `TRIGGER_MODE` changes defaults only. Align emergency dashboard changes back into the repository before a later deployment.
+
+The queue adds temporary storage and queue operations to the existing Worker/DO costs. It is transport buffering, not chat history, and must not be used as a conversation-context store. Rollback to the currently published pre-queue Worker must also account for the consumer attachment: stop intake/consumer processing and purge pending content deliberately rather than leaving an incompatible consumer bound.

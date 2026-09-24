@@ -46,3 +46,6 @@ jobs:
 
       - name: Test
         run: pnpm test -- --run
+
+      - name: Release preflight tests
+        run: pnpm run test:release

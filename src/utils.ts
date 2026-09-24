@@ -12,6 +12,7 @@ export type TranslationStyle = NonNullable<Env['TRANSLATION_STYLE']>;
 
 export type LineEvent = {
 	webhookEventId?: string;
+	timestamp?: number;
 	type?: string;
 	replyToken?: string;
 	source?: {

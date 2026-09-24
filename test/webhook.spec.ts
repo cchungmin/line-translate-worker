@@ -1,4 +1,5 @@
-import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import type { WebhookJob } from '../src/types';
+import { env, createExecutionContext, waitOnExecutionContext, createMessageBatch, getQueueResult } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index';
 import * as line from '../src/clients/line';
@@ -43,9 +44,17 @@ async function signedRequest(events: LineEvent[]): Promise<Request> {
 
 async function deliver(events: LineEvent[], overrides: Partial<Env> = {}) {
 	const ctx = createExecutionContext();
-	const response = await worker.fetch(await signedRequest(events), { ...testEnv, ...overrides }, ctx);
+	const jobs: WebhookJob[] = [];
+	const runtimeEnv = { ...testEnv, ...overrides, LINE_EVENT_QUEUE: { send: async (body: WebhookJob) => { jobs.push(body); } } };
+	const response = await worker.fetch(await signedRequest(events), runtimeEnv, ctx);
 	expect(response.status).toBe(200);
 	await waitOnExecutionContext(ctx);
+	for (const job of jobs) {
+		const batch = createMessageBatch('line-translate-events', [{ id: crypto.randomUUID(), timestamp: new Date(), body: job, attempts: 1 }]);
+		await worker.queue(batch, runtimeEnv);
+		const result = await getQueueResult(batch, createExecutionContext());
+		expect(result.retryBatch.retry).toBe(false);
+	}
 }
 
 function mockUpstreams(failFirstReply = false, content = JSON.stringify({ translation: 'こんにちは' })) {
@@ -62,7 +71,7 @@ function mockUpstreams(failFirstReply = false, content = JSON.stringify({ transl
 	});
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('signed translation webhook', () => {
 	it('translates a direct message, replies to its token, and suppresses redelivery', async () => {
@@ -190,5 +199,140 @@ describe('reported Chinese-to-English regression', () => {
 		const replies = fetch.mock.calls.filter(([url]) => String(url).includes('api.line.me'));
 		expect(replies).toHaveLength(1);
 		expect(JSON.parse(String(replies[0][1]?.body)).messages[0].text).toBe('自動翻訳できるようになった？');
+	});
+});
+
+
+describe('review regressions', () => {
+	const groupSource = () => ({ type: 'group', groupId: crypto.randomUUID() });
+	it('global automatic-off overrides a saved ON mode, preserves manual commands and restores saved preferences', async () => {
+		const upstreams = mockUpstreams();
+		const source = groupSource();
+		const msg = (text: string) => ({ ...event(text), source });
+		await deliver([msg('/auto')]);
+		upstreams.mockClear();
+		await deliver([msg('你能自動翻譯了嗎？')], { AUTO_TRANSLATION_ENABLED: 'false' });
+		expect(upstreams).not.toHaveBeenCalled();
+		await deliver([msg('/auto'), msg('明天見')], { AUTO_TRANSLATION_ENABLED: 'false' });
+		expect(upstreams).toHaveBeenCalledTimes(1);
+		expect(JSON.parse(String(upstreams.mock.calls[0][1]?.body)).messages[0].text).toContain('系統已暫停');
+		upstreams.mockClear();
+		await deliver([msg('/t 明天見')], { AUTO_TRANSLATION_ENABLED: 'false' });
+		expect(upstreams).toHaveBeenCalledTimes(2);
+		upstreams.mockClear();
+		await deliver([msg('明天見')], { AUTO_TRANSLATION_ENABLED: 'true' });
+		expect(upstreams).toHaveBeenCalledTimes(2);
+	});
+
+	it('silences group automatic errors and does not charge oversize input against translation quota', async () => {
+		const upstreams = mockUpstreams();
+		const source = groupSource();
+		const msg = (text: string) => ({ ...event(text), source });
+		const config = { GROUP_TRANSLATION_ENABLED: 'true' as const, RATE_LIMIT_PER_MIN: '1', MAX_INPUT_CHARS: '10' };
+		await deliver([msg('長'.repeat(20)), msg('你好'), msg('再見'), msg('明天見')], config);
+		expect(upstreams.mock.calls.filter(([url]) => String(url).includes('api.openai.com'))).toHaveLength(1);
+		expect(upstreams.mock.calls.filter(([url]) => String(url).includes('api.line.me'))).toHaveLength(1);
+		upstreams.mockClear();
+		await deliver([msg('/t 再見')], config);
+		expect(upstreams).toHaveBeenCalledTimes(1);
+		expect(JSON.parse(String(upstreams.mock.calls[0][1]?.body)).messages[0].text).toContain('訊息太頻繁');
+	});
+
+	it('silences automatic upstream failures but explains failures of explicit requests', async () => {
+		const upstreams = mockUpstreams(false, '{"sourceText":"bad"}');
+		const source = groupSource();
+		const config = { GROUP_TRANSLATION_ENABLED: 'true' as const };
+		await deliver([{ ...event('你好'), source }], config);
+		expect(upstreams.mock.calls.filter(([url]) => String(url).includes('api.line.me'))).toHaveLength(0);
+		await deliver([{ ...event('/t 你好'), source }], config);
+		expect(upstreams.mock.calls.filter(([url]) => String(url).includes('api.line.me'))).toHaveLength(1);
+	});
+
+	it('suppresses identical automatic translations but honors an explicit translation request', async () => {
+		const upstreams = mockUpstreams(false, '{"translation":"了解"}');
+		await deliver([event('了解')]);
+		expect(upstreams).toHaveBeenCalledTimes(1);
+		await deliver([event('/t 了解')]);
+		expect(upstreams).toHaveBeenCalledTimes(3);
+	});
+
+	it('keeps pause and subsequent translation ordering within a queued webhook', async () => {
+		const upstreams = mockUpstreams();
+		const source = groupSource();
+		await deliver(['/auto', '你好', '/pause', '再見', '/t 明天見'].map(text => ({ ...event(text), source })));
+		expect(upstreams.mock.calls.filter(([url]) => String(url).includes('api.openai.com'))).toHaveLength(2);
+	});
+});
+
+
+describe('durable webhook handoff', () => {
+	it('does not acknowledge until the batch has been accepted by the queue', async () => {
+		let accept!: () => void;
+		const send = vi.fn(() => new Promise<void>(resolve => { accept = resolve; }));
+		const ctx = createExecutionContext();
+		const wait = vi.spyOn(ctx, 'waitUntil');
+		const upstreams = mockUpstreams();
+		let responded = false;
+		const request = await signedRequest([event('你好')]);
+		const pending = worker.fetch(request, { ...testEnv, LINE_EVENT_QUEUE: { send } }, ctx).then(response => {
+			responded = true;
+			return response;
+		});
+		await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+		expect(responded).toBe(false);
+		accept();
+		expect((await pending).status).toBe(200);
+		expect(wait).not.toHaveBeenCalled();
+		expect(upstreams).not.toHaveBeenCalled();
+	});
+
+	it('returns 503 if durable acceptance fails, allowing LINE redelivery', async () => {
+		const response = await worker.fetch(await signedRequest([event()]), { ...testEnv,
+			LINE_EVENT_QUEUE: { send: async () => { throw new Error('secret'); } },
+		}, createExecutionContext());
+		expect(response.status).toBe(503);
+	});
+
+	it('processes a slow batch beyond 30 seconds in the queue handler and deduplicates redelivery', async () => {
+		let now = Date.now();
+		const start = now;
+		vi.spyOn(Date, 'now').mockImplementation(() => now);
+		let attempts = 0;
+		const upstreams = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+			if (String(url).includes('api.openai.com')) {
+				now += 7000;
+				return Response.json({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(
+					attempts++ % 2 === 0 ? { sourceText: 'bad' } : { translation: 'こんにちは' },
+				) } }] });
+			}
+			now += 4000;
+			return Response.json({});
+		});
+		const events = [event('你好'), event('再見')];
+		await deliver(events);
+		expect(now - start).toBe(36_000);
+		expect(upstreams.mock.calls.filter(([url]) => String(url).includes('api.line.me'))).toHaveLength(2);
+		await deliver(events);
+		expect(upstreams).toHaveBeenCalledTimes(6);
+	});
+
+	it('discards expired jobs without sending content to an upstream', async () => {
+		const upstreams = mockUpstreams();
+		const batch = createMessageBatch('line-translate-events', [{ id: crypto.randomUUID(), timestamp: new Date(), attempts: 1,
+			body: { version: 1 as const, receivedAt: Date.now() - 60_000, events: [event()] },
+		}]);
+		await worker.queue(batch, testEnv);
+		expect(upstreams).not.toHaveBeenCalled();
+		const result = await getQueueResult(batch, createExecutionContext());
+		expect(result.explicitAcks).toHaveLength(1);
+	});
+
+	it('retries a transient guard failure before any translation slot is consumed', async () => {
+		const batch = createMessageBatch('line-translate-events', [{ id: crypto.randomUUID(), timestamp: new Date(), attempts: 1,
+			body: { version: 1 as const, receivedAt: Date.now(), events: [event()] },
+		}]);
+		await worker.queue(batch, { ...testEnv, TRANSLATION_GUARD: undefined });
+		const result = await getQueueResult(batch, createExecutionContext());
+		expect(result.retryMessages).toHaveLength(1);
 	});
 });

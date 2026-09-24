@@ -4,7 +4,7 @@ import type { LineEvent } from './utils';
 
 type GuardDecision = 'allowed' | 'duplicate' | 'rate_limited' | 'unavailable' | 'skipped';
 
-export type ConversationPolicy = { defaultAuto: boolean; explicit: boolean; control?: Control };
+export type ConversationPolicy = { defaultAuto: boolean; explicit: boolean; eventTime?: number; control?: Control };
 export type GuardResult = { decision: GuardDecision; mode?: ConversationMode };
 
 type GuardRequest = {
@@ -15,6 +15,7 @@ type GuardRequest = {
 };
 
 type GuardState = {
+	modeChangedAt?: number;
 	mode?: ConversationMode;
 	controlCount?: number;
 	windowStartMs: number;
@@ -111,6 +112,10 @@ export class TranslationGuard {
 			return jsonDecision('rate_limited');
 		}
 
+		if (control && control !== 'help' && input.policy?.eventTime !== undefined) {
+			if (input.policy.eventTime < (guardState.modeChangedAt ?? 0)) return jsonDecision('skipped');
+			guardState.modeChangedAt = input.policy.eventTime;
+		}
 		if (control === 'auto') mode = { auto: true };
 		if (control === 'pause') mode = { auto: false };
 		if (control === 'pause1h') mode = { auto: false, resumeAt: now + 3_600_000 };
@@ -150,6 +155,7 @@ function isGuardDecision(value: unknown): value is GuardDecision {
 function isValidGuardRequest(value: GuardRequest): boolean {
 	return (
 		(value?.policy === undefined || (
+			(value.policy?.eventTime === undefined || (Number.isFinite(value.policy.eventTime) && value.policy.eventTime >= 0)) &&
 			typeof value.policy?.defaultAuto === 'boolean' && typeof value.policy.explicit === 'boolean' &&
 			(value.policy.control === undefined || ['auto', 'pause', 'pause1h', 'help'].includes(value.policy.control))
 		)) &&
