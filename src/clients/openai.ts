@@ -1,4 +1,4 @@
-import { isUnexpectedEnglishSentence, type TranslationTarget } from '../language';
+import { isInvalidTranslation, type TranslationTarget } from '../language';
 import type { Env } from '../types';
 import { DEFAULT_MODEL, formatTranslationInput } from '../utils';
 
@@ -121,7 +121,7 @@ async function requestTranslation(env: Env, options: RequestOptions): Promise<Op
 		// Treat malformed, refused, or truncated responses as failed translations.
 		const data: unknown = await response.json().catch(() => null);
 		const text = parseTranslation(data);
-		if (!text || (options.targetLanguage && isUnexpectedEnglishSentence(options.userText, text, options.targetLanguage))) {
+		if (!text || (options.targetLanguage && isInvalidTranslation(options.userText, text, options.targetLanguage))) {
 			return {
 				ok: false,
 				errorType: 'invalid_response',

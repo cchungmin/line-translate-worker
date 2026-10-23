@@ -160,3 +160,7 @@ A guard failure before admission is retried up to three times with a one-second 
 5. The emergency switch is `AUTO_TRANSLATION_ENABLED=false`; changing `GROUP_TRANSLATION_ENABLED` or `TRIGGER_MODE` changes defaults only. Align emergency dashboard changes back into the repository before a later deployment.
 
 The queue adds temporary storage and queue operations to the existing Worker/DO costs. It is transport buffering, not chat history, and must not be used as a conversation-context store. Rollback to the currently published pre-queue Worker must also account for the consumer attachment: stop intake/consumer processing and purge pending content deliberately rather than leaving an incompatible consumer bound.
+
+### Korean output and copied Japanese sentences
+
+Automatic direction follows sentence grammar, including Japanese predicates attached to Korean or Taiwanese names. The prompt explicitly requires translating `김민수は野球監督` and `陳金鋒は野球監督` into Traditional Chinese while preserving the name. Newly introduced Hangul characters are rejected; Hangul already present in the source may be preserved. Unchanged sentences containing at least three kana and hiragana, or a `は` followed by a multi-character Han predicate, are rejected in automatic/Traditional Chinese mode and retried through the configured fallback. Katakana-only names and short acknowledgements remain exempt. These are conservative checks, not a complete language detector. Regression tests mock the screenshot output and copied-name sentences; live model accuracy still requires a LINE check.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveTranslationTarget, isUnexpectedEnglishSentence } from '../src/language';
+import { resolveTranslationTarget, isUnexpectedEnglishSentence, isInvalidTranslation } from '../src/language';
 import { normalizeUserText, buildSystemPrompt } from '../src/utils';
 import type { Env } from '../src/types';
 
@@ -36,5 +36,25 @@ describe('translation language routing', () => {
 	});
 	it('preserves Latin text already in the source', () => {
 		expect(isUnexpectedEnglishSentence('名稱是 New York Times', 'New York Times', 'ja')).toBe(false);
+	});
+});
+
+
+describe('Korean drift and unchanged Japanese sentences', () => {
+	const source = '工藤さんのパターンを見たら、いつか中日も「監督・イチロー」の日が来るかも';
+	it('rejects the screenshot Korean output', () => {
+		expect(isInvalidTranslation(source, '쿠도 씨의 패턴을 보니, 언젠가 주니치에도 「감독 이치로」의 날이 올지도 모르겠네요.', 'auto')).toBe(true);
+	});
+	it.each(['김민수は野球監督', '金敏秀は野球監督', '陳金鋒は野球監督'])('rejects an untranslated Japanese predicate: %s', (text) => {
+		expect(isInvalidTranslation(text, text, 'auto')).toBe(true);
+	});
+	it('allows Korean names preserved in a Chinese translation', () => {
+		expect(isInvalidTranslation('김민수は野球監督', '김민수是棒球總教練', 'auto')).toBe(false);
+	});
+	it.each(['はい', '了解', 'イチロー'])('keeps legitimate short no-ops: %s', (text) => {
+		expect(isInvalidTranslation(text, text, 'auto')).toBe(false);
+	});
+	it('allows Japanese when explicitly requested', () => {
+		expect(isInvalidTranslation('陳金鋒は野球監督', '陳金鋒は野球監督', 'ja')).toBe(false);
 	});
 });

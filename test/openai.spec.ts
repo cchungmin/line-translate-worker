@@ -142,3 +142,18 @@ it('does not start a fallback after the reply budget has expired', async () => {
 	})).toMatchObject({ ok: false, errorType: 'timeout' });
 	expect(fetch).toHaveBeenCalledTimes(1);
 });
+
+
+it.each([
+	['工藤さんのパターンを見たら、いつか中日も「監督・イチロー」の日が来るかも', '쿠도 씨의 패턴을 보니', '看了工藤的例子，說不定中日也會迎來「總教練一朗」的一天'],
+	['김민수は野球監督', '김민수は野球監督', '김민수是棒球總教練'],
+	['陳金鋒は野球監督', '陳金鋒は野球監督', '陳金鋒是棒球總教練'],
+])('recovers from Korean drift or copied Japanese: %s', async (source, invalid, valid) => {
+	const fetch = vi.spyOn(globalThis, 'fetch')
+		.mockResolvedValueOnce(completion(JSON.stringify({ translation: invalid })))
+		.mockResolvedValueOnce(completion(JSON.stringify({ translation: valid })));
+	expect(await translateWithFallback({ ...env, OPENAI_FALLBACK_MODEL: 'gpt-4.1-mini' }, {
+		...options, userText: source, targetLanguage: 'auto',
+	})).toMatchObject({ ok: true, text: valid, model: 'gpt-4.1-mini' });
+	expect(fetch).toHaveBeenCalledTimes(2);
+});

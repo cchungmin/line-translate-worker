@@ -22,3 +22,20 @@ export function isUnexpectedEnglishSentence(source: string, translated: string, 
 	const words = translated.replace(/https?:\/\/\S+/gi, '').match(/[A-Za-z]+(?:['’][A-Za-z]+)*/g) ?? [];
 	return words.length >= 3 && !words.every((word) => source.toLowerCase().includes(word.toLowerCase()));
 }
+
+// Compare script characters rather than guessing a person's nationality from a name.
+export function isInvalidTranslation(source: string, translated: string, target: TranslationTarget): boolean {
+	if (isUnexpectedEnglishSentence(source, translated, target)) return true;
+	const withoutLinks = (text: string) => text.replace(/https?:\/\/\S+/gi, '');
+	const original = withoutLinks(source).normalize('NFC');
+	const output = withoutLinks(translated).normalize('NFC');
+	// Names may legitimately remain in Hangul. Reject newly introduced Hangul
+	// letters, while allowing a Korean name copied from the original sentence.
+	const sourceHangul = new Set(original.match(/\p{Script=Hangul}/gu) ?? []);
+	if ((output.match(/\p{Script=Hangul}/gu) ?? []).some((letter) => !sourceHangul.has(letter))) return true;
+	// An unchanged Japanese sentence is a failed automatic translation, not a
+	// successful no-op. Keep short acknowledgements and proper names exempt.
+	const kana = original.match(/[\p{Script=Hiragana}\p{Script=Katakana}]/gu) ?? [];
+	return (target === 'auto' || target === 'zh-Hant') && ((kana.length >= 3 && /\p{Script=Hiragana}/u.test(original)) || /は\p{Script=Han}{2,}/u.test(original)) &&
+		original.trim() === output.trim();
+}
