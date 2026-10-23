@@ -18,7 +18,7 @@ import {
 } from './utils';
 
 export default {
-	async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const requestStart = Date.now();
 		const config = getConfig(env);
 
@@ -57,16 +57,22 @@ export default {
 			(event.type === 'message' && event.message?.type === 'text')));
 		if (events.length) {
 			if (!env.LINE_EVENT_QUEUE) return new Response('Queue Unavailable', { status: 503 });
+			log({ ...env, DEBUG_LOG: 'true' }, 'info', 'webhook_enqueue_started', { eventCount: events.length });
 			try {
 				// Acknowledge LINE only after the complete batch is durably accepted.
-				await env.LINE_EVENT_QUEUE.send({ version: 1, receivedAt: requestStart, events });
+				// LINE can disconnect before Queue.send finishes. Keep this same
+				// durable handoff alive after cancellation; still await acceptance
+				// before returning 200 so failed sends remain retryable.
+				const accepted = env.LINE_EVENT_QUEUE.send({ version: 1, receivedAt: requestStart, events });
+				ctx.waitUntil(accepted.catch(() => {}));
+				await accepted;
 			} catch {
 				log(env, 'error', 'webhook_enqueue_failed');
 				return new Response('Queue Unavailable', { status: 503 });
 			}
 		}
 
-		log(env, 'info', 'webhook_accepted', { durationMs: Date.now() - requestStart });
+		log({ ...env, DEBUG_LOG: 'true' }, 'info', 'webhook_accepted', { durationMs: Date.now() - requestStart });
 		return new Response('OK');
 	},
 	async queue(batch: QueueBatch, env: Env): Promise<void> {
