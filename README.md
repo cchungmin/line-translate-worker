@@ -164,3 +164,7 @@ The queue adds temporary storage and queue operations to the existing Worker/DO 
 ### Korean output and copied Japanese sentences
 
 Automatic direction follows sentence grammar, including Japanese predicates attached to Korean or Taiwanese names. The prompt explicitly requires translating `김민수は野球監督` and `陳金鋒は野球監督` into Traditional Chinese while preserving the name. Newly introduced Hangul characters are rejected; Hangul already present in the source may be preserved. Unchanged sentences containing at least three kana and hiragana, or a `は` followed by a multi-character Han predicate, are rejected in automatic/Traditional Chinese mode and retried through the configured fallback. Katakana-only names and short acknowledgements remain exempt. These are conservative checks, not a complete language detector. Regression tests mock the screenshot output and copied-name sentences; live model accuracy still requires a LINE check.
+
+### Webhook disconnects
+
+Queue acceptance is awaited before returning HTTP 200. The same pending queue-send promise is also registered with `ctx.waitUntil` so a LINE client disconnect does not immediately cancel an in-flight durable handoff (subject to the platform background lifetime). Failed sends still return 503 when the caller remains connected. Enqueue start and successful acceptance are logged without message content even with debug logging off, allowing cancellation to be distinguished from model failures. This protects handoff after signature verification; it cannot recover a request body that never finished arriving.

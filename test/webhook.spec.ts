@@ -280,9 +280,16 @@ describe('durable webhook handoff', () => {
 		});
 		await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
 		expect(responded).toBe(false);
+		expect(wait).toHaveBeenCalledTimes(1);
+		// The runtime retains the pending handoff even if the HTTP caller leaves.
+		let retained = false;
+		const lifetime = waitOnExecutionContext(ctx).then(() => { retained = true; });
+		await Promise.resolve();
+		expect(retained).toBe(false);
 		accept();
 		expect((await pending).status).toBe(200);
-		expect(wait).not.toHaveBeenCalled();
+		await lifetime;
+		expect(retained).toBe(true);
 		expect(upstreams).not.toHaveBeenCalled();
 	});
 
