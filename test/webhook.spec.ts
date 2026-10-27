@@ -160,6 +160,9 @@ describe('bilingual conversation flow', () => {
 		upstreams.mockClear();
 		await deliver([groupEvent('今日は晴れですね')], options);
 		expect(upstreams).not.toHaveBeenCalled();
+		upstreams.mockResolvedValueOnce(Response.json({ choices: [{ finish_reason: 'stop', message: {
+			content: JSON.stringify({ translation: '今天天氣真好呢' }),
+		} }] }));
 		await deliver([groupEvent('/t 今日は晴れですね')], options);
 		expect(upstreams).toHaveBeenCalledTimes(2);
 		expect(JSON.parse(String(upstreams.mock.calls[0][1]?.body)).messages[1].content).not.toContain('/t');
@@ -341,5 +344,34 @@ describe('durable webhook handoff', () => {
 		await worker.queue(batch, { ...testEnv, TRANSLATION_GUARD: undefined });
 		const result = await getQueueResult(batch, createExecutionContext());
 		expect(result.retryMessages).toHaveLength(1);
+	});
+});
+
+
+describe('Japanese-to-Japanese paraphrase regression', () => {
+	it.each(['同点になった', '/t 同点になった'])('only delivers Chinese for automatic and manual input: %s', async (text) => {
+		let attempts = 0;
+		const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+			if (String(url).includes('api.openai.com')) return Response.json({ choices: [{ finish_reason: 'stop', message: {
+				content: JSON.stringify({ translation: attempts++ === 0 ? '追いついた' : '追平了' }),
+			} }] });
+			return Response.json({});
+		});
+		await deliver([{ ...event(text), source: { type: 'group', groupId: crypto.randomUUID() } }], { GROUP_TRANSLATION_ENABLED: 'true' });
+		const requests = fetch.mock.calls.filter(([url]) => String(url).includes('api.openai.com'));
+		expect(requests).toHaveLength(2);
+		for (const [, init] of requests) {
+			expect(JSON.parse(String(init?.body)).messages[0].content).toContain('目標語言固定為繁體中文');
+		}
+		const replies = fetch.mock.calls.filter(([url]) => String(url).includes('api.line.me'));
+		expect(replies).toHaveLength(1);
+		expect(JSON.parse(String(replies[0][1]?.body)).messages[0].text).toBe('追平了');
+	});
+	it('does not deliver Japanese when both models paraphrase the source', async () => {
+		const fetch = mockUpstreams(false, JSON.stringify({ translation: '追いついた' }));
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		await deliver([{ ...event('同点になった'), source: { type: 'group', groupId: crypto.randomUUID() } }], { GROUP_TRANSLATION_ENABLED: 'true' });
+		expect(fetch.mock.calls.filter(([url]) => String(url).includes('api.openai.com'))).toHaveLength(2);
+		expect(fetch.mock.calls.filter(([url]) => String(url).includes('api.line.me'))).toHaveLength(0);
 	});
 });

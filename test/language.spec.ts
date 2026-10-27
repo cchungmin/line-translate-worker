@@ -9,7 +9,7 @@ describe('translation language routing', () => {
 	it.each(['Can you translate?', 'https://example.com/かな'])('defaults to Japanese: %s', (text) => {
 		expect(resolveTranslationTarget(text, env, null)).toBe('ja');
 	});
-	it.each(['你能自動翻譯了嗎？', '好', '了解', '承知', '明日会議', '東京駅', '自動翻訳できるようになった？', '「ありがとう」是什麼意思？'])('keeps CJK text inside the Japanese/Chinese pair: %s', (text) => {
+	it.each(['你能自動翻譯了嗎？', '好', '了解', '承知', '明日会議', '東京駅', '「ありがとう」是什麼意思？'])('keeps CJK text inside the Japanese/Chinese pair: %s', (text) => {
 		expect(resolveTranslationTarget(text, env, null)).toBe('auto');
 		expect(buildSystemPrompt(env, null, null, 'auto')).toContain('不可翻成英文');
 	});
@@ -51,10 +51,32 @@ describe('Korean drift and unchanged Japanese sentences', () => {
 	it('allows Korean names preserved in a Chinese translation', () => {
 		expect(isInvalidTranslation('김민수は野球監督', '김민수是棒球總教練', 'auto')).toBe(false);
 	});
-	it.each(['はい', '了解', 'イチロー'])('keeps legitimate short no-ops: %s', (text) => {
+	it.each(['了解', 'イチロー'])('keeps legitimate short no-ops: %s', (text) => {
 		expect(isInvalidTranslation(text, text, 'auto')).toBe(false);
 	});
 	it('allows Japanese when explicitly requested', () => {
 		expect(isInvalidTranslation('陳金鋒は野球監督', '陳金鋒は野球監督', 'ja')).toBe(false);
+	});
+});
+
+
+describe('Japanese paraphrase regression', () => {
+	it.each(['同点になった', '追いついた', '自動翻訳できるようになった？', '김민수は野球監督', '陳金鋒は野球監督', 'はい'])('fixes the target to Traditional Chinese: %s', (source) => {
+		expect(resolveTranslationTarget(source, env, null)).toBe('zh-Hant');
+	});
+	it.each(['「ありがとう」是什麼意思？', '我覺得すごい', '這個イチロー很厲害', '了解', '東京駅'])('keeps mixed Chinese and ambiguous names in auto: %s', (source) => {
+		expect(resolveTranslationTarget(source, env, null)).toBe('auto');
+	});
+	it.each(['auto', 'zh-Hant'] as const)('rejects Japanese paraphrases for %s', (target) => {
+		expect(isInvalidTranslation('同点になった', '追いついた', target)).toBe(true);
+		expect(isInvalidTranslation('同点になった', '追平了', target)).toBe(false);
+	});
+	it('preserves Japanese names and quoted terms inside Chinese translations', () => {
+		expect(isInvalidTranslation('イチローが追いついた', 'イチロー追平了', 'zh-Hant')).toBe(false);
+		expect(isInvalidTranslation('「ありがとう」と言った', '說了「ありがとう」', 'zh-Hant')).toBe(false);
+	});
+	it('does not reject Japanese when explicitly requested', () => {
+		expect(resolveTranslationTarget('同点になった', env, 'tw-jp')).toBe('ja');
+		expect(isInvalidTranslation('同点になった', '追いついた', 'ja')).toBe(false);
 	});
 });
