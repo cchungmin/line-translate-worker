@@ -51,9 +51,17 @@ export function isInvalidTranslation(source: string, translated: string, target:
 		const quoted = original.match(QUOTED_TEXT) ?? [];
 		// Permit copied Japanese names/quoted terms, but not Japanese grammar
 		// or paraphrases in a translation whose target is Traditional Chinese.
-		const unexpectedKana = (output.match(KANA_RUN) ?? []).some((run) => {
+		const unexpectedKana = [...output.matchAll(KANA_RUN)].some((match) => {
+			const run = match[0];
 			const copiedKatakana = !/\p{Script=Hiragana}/u.test(run) && original.includes(run);
-			return !copiedKatakana && !quoted.some((term) => term.includes(run));
+			// Brands such as 食べログ and 食べチョク combine Han, hiragana
+			// and katakana. Match the copied name including its Han character;
+			// never exempt trailing particles/verbs (e.g. 食べログになった).
+			const hanBefore = output.slice(0, match.index).match(/\p{Script=Han}$/u)?.[0];
+			const copiedMixedName = Boolean(hanBefore) &&
+				/^[\p{Script=Hiragana}]+[\p{Script=Katakana}ー]+$/u.test(run) &&
+				original.includes(hanBefore + run);
+			return !copiedKatakana && !copiedMixedName && !quoted.some((term) => term.includes(run));
 		});
 		if (unexpectedKana || original.trim() === output.trim()) return true;
 	}
