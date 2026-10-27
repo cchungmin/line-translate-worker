@@ -375,3 +375,19 @@ describe('Japanese-to-Japanese paraphrase regression', () => {
 		expect(fetch.mock.calls.filter(([url]) => String(url).includes('api.line.me'))).toHaveLength(0);
 	});
 });
+
+
+describe('mixed-script brand false rejection', () => {
+	it.each(['', '/t '])('delivers valid Chinese retaining 食べログ without fallback: %s', async (prefix) => {
+		const source = 'Kiten さんの食べログの予約もうバツになてったのでたぶん微妙';
+		const translated = 'Kiten 先生，食べログ上的訂位已經顯示叉叉了，大概不太樂觀。';
+		const fetch = mockUpstreams(false, JSON.stringify({ translation: translated }));
+		await deliver([{ ...event(prefix + source), source: { type: 'group', groupId: crypto.randomUUID() } }], { GROUP_TRANSLATION_ENABLED: 'true' });
+		const requests = fetch.mock.calls.filter(([url]) => String(url).includes('api.openai.com'));
+		expect(requests).toHaveLength(1);
+		expect(JSON.parse(String(requests[0][1]?.body)).messages[0].content).toContain('目標語言固定為繁體中文');
+		const replies = fetch.mock.calls.filter(([url]) => String(url).includes('api.line.me'));
+		expect(replies).toHaveLength(1);
+		expect(JSON.parse(String(replies[0][1]?.body)).messages[0].text).toBe(translated);
+	});
+});

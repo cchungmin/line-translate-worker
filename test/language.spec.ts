@@ -80,3 +80,30 @@ describe('Japanese paraphrase regression', () => {
 		expect(isInvalidTranslation('同点になった', '追いついた', 'ja')).toBe(false);
 	});
 });
+
+
+describe('unquoted mixed-script brand names', () => {
+	const source = 'Kiten さんの食べログの予約もうバツになてったのでたぶん微妙';
+	it('routes the typo-containing Japanese message to Traditional Chinese', () => {
+		expect(resolveTranslationTarget(source, env, null)).toBe('zh-Hant');
+	});
+	it.each(['auto', 'zh-Hant'] as const)('accepts valid Chinese retaining 食べログ for %s', (target) => {
+		expect(isInvalidTranslation(source, 'Kiten 先生，食べログ上的訂位已經顯示叉叉了，大概不太樂觀。', target)).toBe(false);
+	});
+});
+
+
+it.each([
+	['食べチョクを使った', '用了食べチョク'],
+	['食べログの予約', '食べログ的訂位'],
+])('allows copied Han/hiragana/katakana names: %s', (source, output) => {
+	expect(isInvalidTranslation(source, output, 'zh-Hant')).toBe(false);
+});
+it.each([
+	['食べログの予約は微妙', '食べログの予約は難しい'],
+	['食べログになった', '食べログになっていた'],
+	['食べログの予約', '食べチョク的訂位'],
+	['同点になった', '追いついた'],
+])('still rejects Japanese prose or newly introduced mixed names: %s', (source, output) => {
+	expect(isInvalidTranslation(source, output, 'zh-Hant')).toBe(true);
+});
