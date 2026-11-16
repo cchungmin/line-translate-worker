@@ -14,6 +14,7 @@ export interface Env {
 	GROUP_TRANSLATION_ENABLED?: 'true' | 'false';
 	DEBUG_LOG?: 'true' | 'false';
 	LINE_BOT_USER_ID?: string;
+	DEBUG_TOKEN?: string;
 	MAX_INPUT_CHARS?: string;
 	MAX_OUTPUT_TOKENS?: string;
 	OPENAI_TIMEOUT_MS?: string;
