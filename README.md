@@ -23,15 +23,13 @@ LINE bot translation worker powered by OpenAI and Cloudflare Workers.
 3. Optional secret for precise mention matching:
    - `pnpm exec wrangler secret put LINE_BOT_USER_ID`
 4. Deploy once to create the required Durable Object binding for atomic idempotency and rate limiting:
-   - Run typecheck and tests, open a PR, and wait for CI before release.
-- `pnpm deploy` requires a clean `main` checkout matching freshly fetched `origin/main`, and verifies that the queue exists before deploying. Feature branches and unreviewed local commits are rejected. `node scripts/deploy.mjs --check` runs only the Git preflight. Record the deployed Git commit and Wrangler version in the PR.
-- Verify the deployed version and the public health response. A health check does not exercise LINE/OpenAI credentials.
-- Roll back code with `pnpm exec wrangler rollback <previous-version-id>` if needed. Saved conversation modes survive code rollback; a pre-controls version ignores them.
+   - `pnpm deploy` (see [Deploy](#deploy) for the preflight requirements)
 
 ## Runtime Vars (`wrangler.jsonc`)
 
-- `OPENAI_MODEL` (current default: `gpt-6-luna`; uses `reasoning_effort: none` and `max_completion_tokens` for short translation requests)
-- `OPENAI_FALLBACK_MODEL` (current default: `gpt-4.1-mini`)
+- `OPENAI_MODEL` (current default: `gpt-6-luna`)
+- `OPENAI_FALLBACK_MODEL` (current default: `gpt-6-sol`; replaced `gpt-4.1-mini`, which OpenAI shuts down on 2027-01-14)
+  - Both models are sent `temperature: 0`. Model names starting with `gpt-3.5` or `gpt-4` use the legacy `max_tokens`; every other name is treated as a current-generation model and gets `reasoning_effort: none` with `max_completion_tokens`. A replacement model must accept those parameters on Chat Completions.
 - `TRANSLATION_MODE` (`auto | ja2zh | zh2ja`)
 - `TRANSLATION_STYLE` (`business | casual | neutral | polite`)
 - `TRIGGER_MODE` (`all | mention | direct`; deployed default: `direct`)
@@ -52,8 +50,6 @@ LINE bot translation worker powered by OpenAI and Cloudflare Workers.
 - `ERROR_REPLY_ENABLED`
 
 The Worker explicitly sends `store: false` to OpenAI. Message text is not stored in Durable Objects or logs. Pending webhook batches (including text and reply tokens) are temporarily persisted in Cloudflare Queues until acknowledged or expired; provision the queue with a 300-second retention limit as described below. The Durable Object stores conversation mode (including a timed pause deadline), event IDs with logical expiration timestamps, and rate-limit counters. Expired IDs are removed on a subsequent accepted request, so inactive conversations can retain expired IDs beyond the deduplication window.
-
-Translation responses use [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs) with a strict `translation` string field. Both configured models must support Chat Completions `json_schema`. The Worker validates completion status and the response schema, then sends only the field's text to LINE. Malformed, empty, refused, or truncated responses are rejected and can use the configured fallback model once; raw model output is never forwarded as an error recovery path. JSON that is part of the translated text itself is preserved.
 
 Translation responses use [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs) with a strict `translation` string field. Both configured models must support Chat Completions `json_schema`. The Worker validates completion status and the response schema, then sends only the field's text to LINE. Malformed, empty, refused, or truncated responses are rejected and can use the configured fallback model once; raw model output is never forwarded as an error recovery path. JSON that is part of the translated text itself is preserved.
 
@@ -112,7 +108,9 @@ Private chats and groups now start with automatic Japanese ↔ Traditional Chine
 2. Deploy.
 3. Check logs with `pnpm exec wrangler tail` or Cloudflare dashboard.
 4. For bot profile debug:
-   - `GET /debug/bot-info?debug=1`
+   - `pnpm exec wrangler secret put DEBUG_TOKEN` (any long random value)
+   - `GET /debug/bot-info` with the header `Authorization: Bearer <DEBUG_TOKEN>`
+   - The endpoint returns 404 unless `DEBUG_LOG` is `true`, `DEBUG_TOKEN` is set, and the header matches.
 5. Set `DEBUG_LOG` back to `false` after troubleshooting.
 
 ## Failure Modes

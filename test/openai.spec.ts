@@ -40,6 +40,18 @@ describe('OpenAI translation response contract', () => {
 		expect(body).not.toHaveProperty('max_completion_tokens');
 	});
 
+	it.each(['gpt-6-sol', 'gpt-5.6-luna', 'gpt-6-luna-2026-09-22', 'some-future-model'])(
+		'sends current-generation parameters when the fallback is %s', async (fallback) => {
+			const fetch = vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce(Response.json({ error: { code: 'server_error' } }, { status: 500 }))
+				.mockResolvedValueOnce(completion(JSON.stringify({ translation: translated })));
+			expect(await translateWithFallback({ ...env, OPENAI_MODEL: 'gpt-6-luna', OPENAI_FALLBACK_MODEL: fallback }, options))
+				.toMatchObject({ ok: true, text: translated, model: fallback });
+			const body = JSON.parse(String(fetch.mock.calls[1][1]?.body));
+			expect(body).toMatchObject({ model: fallback, reasoning_effort: 'none', max_completion_tokens: 600, temperature: 0 });
+			expect(body).not.toHaveProperty('max_tokens');
+		});
+
 	it('requests a strict schema and extracts only the translated text', async () => {
 		const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(completion(JSON.stringify({ translation: translated })));
 		expect(await translateWithFallback(env, options)).toMatchObject({ ok: true, text: translated });

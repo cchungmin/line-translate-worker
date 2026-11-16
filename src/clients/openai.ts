@@ -72,7 +72,6 @@ async function requestTranslation(env: Env, options: RequestOptions): Promise<Op
 					{ role: 'system', content: options.systemPrompt },
 					{ role: 'user', content: formatTranslationInput(options.userText) },
 				],
-				temperature: 0,
 				response_format: {
 					type: 'json_schema',
 					json_schema: {
@@ -86,10 +85,7 @@ async function requestTranslation(env: Env, options: RequestOptions): Promise<Op
 						},
 					},
 				},
-				// Luna defaults to medium reasoning; simple translation should not pay that latency.
-				...(options.model === 'gpt-6-luna'
-					? { reasoning_effort: 'none', max_completion_tokens: options.maxOutputTokens }
-					: { max_tokens: options.maxOutputTokens }),
+				...completionParams(options.model, options.maxOutputTokens),
 				store: false,
 			}),
 			signal: controller.signal,
@@ -146,6 +142,19 @@ async function requestTranslation(env: Env, options: RequestOptions): Promise<Op
 	} finally {
 		clearTimeout(timeoutId);
 	}
+}
+
+// GPT-3.5/GPT-4-era models take `max_tokens` and have no reasoning setting.
+const LEGACY_MODEL = /^(?:ft:)?gpt-(?:3\.5|4)/i;
+
+// Current models default to medium reasoning; simple translation should not pay
+// that latency. They accept `temperature` only when reasoning is off, and
+// require `max_completion_tokens`. Unknown model names get these parameters so
+// a rotated model does not silently fall back to the legacy request shape.
+export function completionParams(model: string, maxOutputTokens: number): Record<string, unknown> {
+	return LEGACY_MODEL.test(model.trim())
+		? { temperature: 0, max_tokens: maxOutputTokens }
+		: { temperature: 0, reasoning_effort: 'none', max_completion_tokens: maxOutputTokens };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

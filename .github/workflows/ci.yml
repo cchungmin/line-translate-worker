@@ -21,10 +21,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -34,12 +34,9 @@ jobs:
           corepack prepare pnpm@11.7.0 --activate
 
       - name: Install dependencies
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            pnpm install --frozen-lockfile --config.minimumReleaseAge=0
-          else
-            pnpm install --frozen-lockfile
-          fi
+        # pnpm's release-age gate stays on for every run. Dependabot's cooldown
+        # (.github/dependabot.yml) keeps its version updates older than the gate.
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck
         run: pnpm run typecheck

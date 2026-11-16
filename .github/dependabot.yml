@@ -9,6 +9,10 @@ updates:
       time: "09:00"
       timezone: "Asia/Tokyo"
     open-pull-requests-limit: 5
+    # Wait out pnpm's release-age gate so CI installs without bypassing it.
+    # Security updates ignore the cooldown and may need a CI re-run a day later.
+    cooldown:
+      default-days: 3
     commit-message:
       prefix: "deps"
     groups:
@@ -16,3 +20,16 @@ updates:
         dependency-type: "development"
         patterns:
           - "*"
+
+  # Keeps the commit-SHA pins in .github/workflows up to date.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Tokyo"
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "ci"

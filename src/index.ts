@@ -12,6 +12,7 @@ import {
 	normalizeUserText,
 	readRequestBodyWithinLimit,
 	shouldTranslateEvent,
+	timingSafeEqual,
 	hasExplicitTrigger,
 	type LineEvent,
 	type LineWebhookPayload,
@@ -104,7 +105,11 @@ async function handleGetRequest(request: Request, env: Env): Promise<Response> {
 	if (url.pathname !== '/debug/bot-info') {
 		return new Response('LINE translator worker is running.');
 	}
-	if (env.DEBUG_LOG !== 'true' || url.searchParams.get('debug') !== '1') {
+	// Requires both the debug switch and a secret token; without a configured
+	// token the endpoint does not exist.
+	const token = env.DEBUG_TOKEN?.trim();
+	const presented = request.headers.get('authorization') ?? '';
+	if (env.DEBUG_LOG !== 'true' || !token || !timingSafeEqual(presented, `Bearer ${token}`)) {
 		return new Response('Not Found', { status: 404 });
 	}
 
